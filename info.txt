@@ -1,19 +1,79 @@
-select * from sv_user_U123331;
+Here’s the **clean, correct SQL** for your `SV_USER_U123331` table – with a working `INSERT` and a `SELECT` to verify. All syntax is fixed and consistent.
 
+---
 
-INSERT INTO sv_user_U123331 (user_id,username, password, langguage_id) 
-VALUES ('U123331','charan', 'PamulaCharan@#12345','U123331', 1);
+## ✅ Clean Code
 
+```sql
+-- 1. Create table with proper constraints
 CREATE TABLE sv_user_U123331 (
-    user_id         VARCHAR2(50)  NOT NULL,
-    username        VARCHAR2(50)  NOT NULL,
-    password        VARCHAR2(100) NOT NULL,
-    modified_date   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    modified_user_id VARCHAR2(50)  NOT NULL,
-    langguage_id    NUMBER,
-    inactive        CHAR(1) DEFAULT 'N' CHECK (inactive IN ('Y', 'N'))
+    user_id          VARCHAR2(50)   NOT NULL,
+    username         VARCHAR2(50)   NOT NULL,
+    password         VARCHAR2(100)  NOT NULL,
+    modified_date    TIMESTAMP      DEFAULT CURRENT_TIMESTAMP,
+    modified_user_id VARCHAR2(50)   NOT NULL,   -- who made the last change
+    langguage_id     NUMBER,
+    inactive         CHAR(1)        DEFAULT 'N' CHECK (inactive IN ('Y', 'N'))
 );
 
+-- Optional: add primary key on user_id (recommended)
+-- ALTER TABLE sv_user_U123331 ADD CONSTRAINT pk_user_id PRIMARY KEY (user_id);
+
+-- 2. Insert a record – include ALL NOT NULL columns
+--    (modified_user_id is required; provide the same user as the creator)
+INSERT INTO sv_user_U123331 (
+    user_id,
+    username,
+    password,
+    modified_user_id,
+    langguage_id
+) VALUES (
+    'U123331',
+    'charan',
+    'PamulaCharan@#12345',
+    'U123331',        -- or any valid user ID
+    1
+);
+
+-- 3. View all records
+SELECT * FROM sv_user_U123331;
+```
+
+---
+
+## 🔍 What was fixed
+
+| Issue in your original | Correction |
+|------------------------|------------|
+| `INSERT` had **4 columns** but **5 values** | Corrected column list to match 5 values (added `modified_user_id`). |
+| `modified_user_id` is `NOT NULL` but missing in `INSERT` | Added explicit value (`'U123331'`). |
+| Column order mismatch | Aligned columns and values exactly. |
+| No `PRIMARY KEY` | Added a recommendation (commented out) – you can uncomment if needed. |
+
+---
+
+## 📝 Additional improvements
+
+- **Primary key** – add it for data integrity:  
+  ```sql
+  ALTER TABLE sv_user_U123331 ADD CONSTRAINT pk_user_id PRIMARY KEY (user_id);
+  ```
+- **Default for `modified_date`** – already set to `CURRENT_TIMESTAMP`, so you don’t need to provide it.
+- **Foreign keys** – if `langguage_id` references a language table, add a constraint.
+
+---
+
+## ▶️ To test
+
+Run the script in your SQL client (SQL*Plus, SQL Developer, etc.). Then:
+
+```sql
+SELECT user_id, username, langguage_id, inactive FROM sv_user_U123331;
+```
+
+You should see your inserted row.
+
+Let me know if you need any further adjustments!
 
 
 
