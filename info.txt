@@ -1,1 +1,69 @@
 exec linus.pkg_claim_document_deletion.process_invoice_deletion(20035562,'INCIDENT_NUMBER');
+package org.example;
+
+import javax.servlet.ServletException;
+import javax.servlet.annotation.WebServlet;
+import javax.servlet.http.HttpServlet;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import java.io.IOException;
+import java.io.PrintWriter;
+import java.sql.CallableStatement;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
+@WebServlet("/ExecuteDeletion")
+public class ExecuteDeletionServlet extends HttpServlet {
+    private static final long serialVersionUID = 1L;
+    private static final Logger LOGGER = Logger.getLogger(ExecuteDeletionServlet.class.getName());
+
+    private static final String DB_URL = "jdbc:oracle:thin:@//SMTRND:1531/SMTRND";
+    private static final String DB_USER = "Linus";
+    private static final String DB_PASSWORD = "G4uh3yAW!";
+    private static final String SQL_CALL =
+            "{ call linus.pkg_claim_document_deletion.process_invoice_deletion(?, ?) }";
+
+    static {
+        try {
+            Class.forName("oracle.jdbc.driver.OracleDriver");
+        } catch (ClassNotFoundException e) {
+            throw new RuntimeException("Oracle driver missing. Add ojdbc8.jar to WEB-INF/lib.", e);
+        }
+    }
+
+    @Override
+    protected void doGet(HttpServletRequest request, HttpServletResponse response)
+            throws ServletException, IOException {
+        doPost(request, response);
+    }
+
+    @Override
+    protected void doPost(HttpServletRequest request, HttpServletResponse response)
+            throws ServletException, IOException {
+
+        response.setContentType("text/plain");
+        PrintWriter out = response.getWriter();
+
+        // Hardcoded values – exactly as you requested
+        long docId = 20035562L;
+        String incidentNo = "INCIDENT_NUMBER";
+
+        try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
+             CallableStatement cstmt = conn.prepareCall(SQL_CALL)) {
+
+            cstmt.setLong(1, docId);
+            cstmt.setString(2, incidentNo);
+            cstmt.execute();
+
+            out.println("SUCCESS: Document " + docId + " deleted (incident: " + incidentNo + ")");
+            LOGGER.info("Deletion executed successfully.");
+
+        } catch (SQLException e) {
+            LOGGER.log(Level.SEVERE, "Deletion failed", e);
+            out.println("ERROR: " + e.getMessage());
+        }
+    }
+}
