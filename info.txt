@@ -3,10 +3,10 @@
 <html>
 <head>
     <meta charset="ISO-8859-1">
-    <title>Success Page</title>
+    <title>Login Page</title>
     <style>
         body {
-            background-color: #abcdef;
+            background-color: #55aaff;
             display: flex;
             flex-direction: column;
             align-items: center;
@@ -17,43 +17,41 @@
 
         h1 {
             color: #ffffff;
-            background-color: #55aaff;
+            background-color: #ff4444;
             padding: 10px;
             border-radius: 5px;
-            animation: fadeIn 1s ease-in-out;
+            animation: shake 0.5s ease-in-out;
         }
 
         h2 {
-            color: #333333;
+            color: #ffffff;
             font-size: 24px;
             margin-top: 20px;
-            animation: slideInLeft 1s ease-in-out;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
         }
 
-        /* Keyframe animations */
-        @keyframes fadeIn {
+        /* Keyframe animation */
+        @keyframes shake {
             0% {
-                opacity: 0;
+                transform: translateX(-5px);
             }
-            100% {
-                opacity: 1;
+            25% {
+                transform: translateX(5px);
             }
-        }
-
-        @keyframes slideInLeft {
-            0% {
-                transform: translateX(-50px);
-                opacity: 0;
+            50% {
+                transform: translateX(-5px);
+            }
+            75% {
+                transform: translateX(5px);
             }
             100% {
                 transform: translateX(0);
-                opacity: 1;
             }
         }
     </style>
 </head>
 <body>
-    <h1>Success Page</h1>
-    <h2>Login Successful!</h2>
+    <h1>Login Failed !!</h1>
+    <h2>Please try again.</h2>
 </body>
 </html>
