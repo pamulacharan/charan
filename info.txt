@@ -1,266 +1,693 @@
+I’ll build a complete system where:
 
-  CREATE TABLE "LINUS"."AUDIT_CLAIM_DOCUMENT_DELETION" 
-   (	"AUDIT_ID" NUMBER GENERATED ALWAYS AS IDENTITY MINVALUE 1 MAXVALUE 9999999999999999999999999999 INCREMENT BY 1 START WITH 1 CACHE 20 NOORDER  NOCYCLE  NOKEEP  NOSCALE  NOT NULL ENABLE, 
-	"DOCUMENT_ID" NUMBER, 
-	"TICKET_NUMBER" VARCHAR2(50 BYTE), 
-	"ACTION_TYPE" VARCHAR2(50 BYTE), 
-	"STATUS" VARCHAR2(20 BYTE), 
-	"MESSAGE" VARCHAR2(4000 BYTE), 
-	"LOG_DATE" DATE, 
-	"LOG_USER" VARCHAR2(100 BYTE)
-   ) SEGMENT CREATION IMMEDIATE 
-  PCTFREE 10 PCTUSED 40 INITRANS 1 MAXTRANS 255 
- NOCOMPRESS LOGGING
-  STORAGE(INITIAL 65536 NEXT 1048576 MINEXTENTS 1 MAXEXTENTS 2147483645
-  PCTINCREASE 0 FREELISTS 1 FREELIST GROUPS 1
-  BUFFER_POOL DEFAULT FLASH_CACHE DEFAULT CELL_FLASH_CACHE DEFAULT)
-  TABLESPACE "D1_AA"   NO INMEMORY ;
+- **Users** submit document IDs and incident numbers – these are stored in a `DELETION_REQUESTS` table.
+- **Admins** log in, see all pending requests, and have the authority to execute the deletion procedure for each request.
+- **Only admins** can delete – regular users can only submit requests and view their own submissions.
 
-create or replace PACKAGE pkg_claim_document_deletion AS
+All code is **Java 1.8 compatible**, uses the same DB connection as your working `LoginServlet`.
 
-          
-    PROCEDURE log_event(
-        p_doc_id       IN NUMBER,
-        p_ticket       IN VARCHAR2,
-        p_action       IN VARCHAR2,
-        p_status       IN VARCHAR2,
-        p_message      IN VARCHAR2
-    );
+---
 
-     FUNCTION validate_invoice(p_document_id IN NUMBER) RETURN BOOLEAN;
+## 📦 1. Database Setup (run once)
 
-    PROCEDURE restore_from_backup(
-        p_document_id  IN NUMBER,
-        p_ticket       IN VARCHAR2
-    );
+Create a sequence and a table to store deletion requests.
 
-     PROCEDURE backup_and_purge_invoice(
-        p_document_id  IN NUMBER,
-        p_ticket       IN VARCHAR2
-    );
+```sql
+-- Sequence for auto-incrementing request ID
+CREATE SEQUENCE deletion_requests_seq START WITH 1 INCREMENT BY 1;
 
-     PROCEDURE process_invoice_deletion(
-        p_document_id  IN NUMBER,
-        p_ticket       IN VARCHAR2
-    );
+-- Table to store requests
+CREATE TABLE deletion_requests (
+    request_id      NUMBER PRIMARY KEY,
+    doc_id          NUMBER NOT NULL,
+    incident_no     VARCHAR2(100) NOT NULL,
+    submitted_by    VARCHAR2(50) NOT NULL,
+    submitted_date  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    status          VARCHAR2(20) DEFAULT 'PENDING', -- PENDING, DELETED, FAILED
+    processed_by    VARCHAR2(50),
+    processed_date  TIMESTAMP
+);
 
-END pkg_claim_document_deletion;
+-- Add ROLE column to your existing SV_USER table (if not exists)
+ALTER TABLE SV_USER ADD (role VARCHAR2(20) DEFAULT 'USER');
+-- Update your admin user(s)
+UPDATE SV_USER SET role = 'ADMIN' WHERE USER_ID = 'your_admin_username';
+COMMIT;
+```
 
+---
 
+## 📁 2. Updated `LoginServlet` (now stores role in session)
 
+Same as yours, but we also fetch the `role` column and store it in the session.
 
+```java
+package org.example;
 
+import javax.servlet.ServletException;
+import javax.servlet.annotation.WebServlet;
+import javax.servlet.http.HttpServlet;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import javax.servlet.http.HttpSession;
+import java.io.IOException;
+import java.sql.*;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
+@WebServlet("/LoginServlet")
+public class LoginServlet extends HttpServlet {
+    private static final long serialVersionUID = 1L;
+    private static final Logger LOGGER = Logger.getLogger(LoginServlet.class.getName());
 
+    private static final String DB_URL = "jdbc:oracle:thin:@//SMTRND:1531/SMTRND";
+    private static final String DB_USER = "Linus";
+    private static final String DB_PASSWORD = "G4uh3yAW!";
+    // Query now includes ROLE
+    private static final String SQL_SELECT = "SELECT USER_ID, ROLE FROM SV_USER WHERE USER_ID = ? AND PASSWORD = ?";
 
-create or replace PACKAGE BODY pkg_claim_document_deletion AS
+    static {
+        try {
+            Class.forName("oracle.jdbc.driver.OracleDriver");
+        } catch (ClassNotFoundException e) {
+            throw new RuntimeException("Oracle JDBC driver not found.", e);
+        }
+    }
 
+    @Override
+    protected void doPost(HttpServletRequest request, HttpServletResponse response)
+            throws ServletException, IOException {
 
-PROCEDURE log_event(
-    p_doc_id       IN NUMBER,
-    p_ticket       IN VARCHAR2,
-    p_action       IN VARCHAR2,
-    p_status       IN VARCHAR2,
-    p_message      IN VARCHAR2
-) IS
-PRAGMA AUTONOMOUS_TRANSACTION;
-BEGIN
-    INSERT INTO audit_claim_document_deletion
-        (document_id, ticket_number, action_type, status, message, log_date, log_user)
-    VALUES
-        (p_doc_id, p_ticket, p_action, p_status, p_message, SYSDATE, USER);
+        String username = request.getParameter("textName");
+        String password = request.getParameter("textpwd");
 
-    COMMIT;
-END log_event;
+        if (username == null || username.trim().isEmpty() ||
+            password == null || password.trim().isEmpty()) {
+            LOGGER.warning("Empty credentials");
+            response.sendRedirect(request.getContextPath() + "/Error.jsp");
+            return;
+        }
 
+        try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
+             PreparedStatement pst = conn.prepareStatement(SQL_SELECT)) {
 
-FUNCTION validate_invoice(p_document_id IN NUMBER)
-RETURN BOOLEAN
-IS
-    v_count NUMBER;
-BEGIN
-    SELECT COUNT(*)
-      INTO v_count
-      FROM sv_invoice_header
-     WHERE document_id   = p_document_id
-       AND posting_status = 0
-       AND error_id       IS NULL
-       AND profit_center_id = 1054;
+            pst.setString(1, username);
+            pst.setString(2, password);
 
-    RETURN v_count > 0;
+            try (ResultSet rs = pst.executeQuery()) {
+                if (rs.next()) {
+                    String role = rs.getString("ROLE");
+                    HttpSession session = request.getSession();
+                    session.setAttribute("username", username);
+                    session.setAttribute("role", role);
 
-EXCEPTION
-    WHEN OTHERS THEN
-        RETURN FALSE;
-END validate_invoice;
+                    LOGGER.info("Login successful: " + username + " with role " + role);
+                    // Redirect based on role
+                    if ("ADMIN".equalsIgnoreCase(role)) {
+                        response.sendRedirect(request.getContextPath() + "/admin.jsp");
+                    } else {
+                        response.sendRedirect(request.getContextPath() + "/user.jsp");
+                    }
+                } else {
+                    LOGGER.info("Failed login: " + username);
+                    response.sendRedirect(request.getContextPath() + "/Error.jsp");
+                }
+            }
+        } catch (SQLException e) {
+            LOGGER.log(Level.SEVERE, "DB error", e);
+            response.sendRedirect(request.getContextPath() + "/Error.jsp");
+        }
+    }
+}
+```
 
+---
 
-PROCEDURE restore_from_backup(
-    p_document_id IN NUMBER,
-    p_ticket      IN VARCHAR2
-) IS
-BEGIN
+## 🧑‍💻 3. User Page: `user.jsp`
 
-    INSERT INTO sv_invoice_header
-        SELECT BRANCH_ID, COMPANY_ID, LOCATION_ID, CALL_OPEN_DATE, DOCUMENT_ID, TAX_SCHEDULE_ID, PRICE_MATRIX_GROUP_ID, PROFIT_CENTER_ID, PRINTING_OPTION_ID, INVOICE_TYPE_ID, SERVICE_CALL_ID, LABOR_RATE_GROUP_ID, INVOICE_NUMBER, BATCH_ID, INVOICE_COMMENT_ID_1, INVOICE_COMMENT_ID_2, COST_LABOR_CATEGORY_1, COST_LABOR_CATEGORY_2, COST_LABOR_CATEGORY_3, COST_LABOR_CATEGORY_4, COST_LABOR_CATEGORY_5, COST_EQUIPMENT, COST_MATERIAL, COST_SUBS, COST_OTHER, COST_TAX, COST_FREIGHT, BILLABLE_LABOR_CATEGORY_1, BILLABLE_LABOR_CATEGORY_2, BILLABLE_LABOR_CATEGORY_3, BILLABLE_LABOR_CATEGORY_4, BILLABLE_LABOR_CATEGORY_5, BILLABLE_EQUIPMENT, BILLABLE_MATERIAL, BILLABLE_SUBS, BILLABLE_OTHER, TAX_DETAIL_ID_1, TAX_AMOUNT_1, BILLABLE_FREIGHT, TAX_DETAIL_ID_2, TAX_AMOUNT_2, ON_ACCOUNT, TAX_DETAIL_ID_3, TAX_AMOUNT_3, TAX_DETAIL_ID_4, TAX_AMOUNT_4, PAYMENT_TERMS_ID, SHIPPING_METHOD_ID, CASH_AMOUNT, LANGUAGE_ID, DOCUMENT_DATE, SALESPERSON_ID, COMMISSION_PERCENT, COMMISSION_PCT_OF_SALE, COMMISSION_EARNINGS, SALES_TERRITORY, SALESPERSON_ID_2, COMMISSION_PERCENT_2, COMMISSION_PCT_OF_SALE_2, COMMISSION_EARNINGS_2, SALES_TERRITORY_2, PURCHASE_ORDER_NUMBER, TRADE_DISCOUNT_AMOUNT, CHECKBOOK_ID_CHECK, CASH_DATE, DOCUMENT_NUMBER_CASH, CHECK_AMOUNT, CHECKBOOK_ID_CREDIT_CARD, CHECK_NUMBER, CHECK_DATE, DOCUMENT_NUMBER_CHECK, DOCUMENT_NBR_CREDIT_CARD, CREDIT_CARD_AMOUNT, CREDIT_CARD_NAME, RECEIPT_NUMBER_CREDIT_CARD, CREDIT_CARD_DATE, DISCOUNT_TAKEN_AMOUNT, CHECKBOOK_ID_CASH, POSTING_STATUS, POSTED_DATE, INVOICE_STYLE_ID, NO_TIMES_PRINTED, PRINTED_DATE, CHGD_SINCE_PRINTING_FLAG, DOCUMENT_AMOUNT, DISCOUNT_PERCENT_AMOUNT, DISCOUNT_DOLLAR_AMOUNT, DISCOUNT_AVAILABLE_AMOUNT, DISCOUNT_DATE, DUE_DATE, DATE_PAID, AMOUNT_RECEIVED, MODIFIED_DATE, MODIFIED_USER_ID, INVOICE_DESCRIPTION, MANUAL_SALES_DIST, BILLING_CURRENCY_ID, MANUAL_COMMISSION_DIST, BASE_CURRENCY_ID, REPORTING_CURRENCY_ID, BILL_TO_CUSTOMER_ID, CREDIT_MEMO_REASON, APPLY_TO_INVOICE_NBR, APPLY_TO_DOCUMENT_NBR, ERROR_ID, IS_CREDIT_MEMO, JOB_NUMBER, EXCHANGE_RATE_TYPE_ID, WORK_SITE_LOCATION_ID, NATIONAL_ACCOUNT, CREATION_DATE
-        FROM sv_invoice_header_bkp
-        WHERE document_id = p_document_id
-          AND NOT EXISTS (
-                SELECT 1 FROM sv_invoice_header h
-                WHERE h.document_id = p_document_id
-              );
+After login, users see a form to submit a deletion request and a table showing their own submissions.
 
+```jsp
+<%@ page language="java" contentType="text/html; charset=UTF-8" pageEncoding="UTF-8" %>
+<%@ page import="java.sql.*, java.util.*" %>
+<%
+    // Check if user is logged in
+    String username = (String) session.getAttribute("username");
+    String role = (String) session.getAttribute("role");
+    if (username == null) {
+        response.sendRedirect("login.jsp");
+        return;
+    }
+    // If user is admin, redirect to admin page
+    if ("ADMIN".equalsIgnoreCase(role)) {
+        response.sendRedirect("admin.jsp");
+        return;
+    }
+%>
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>User Dashboard</title>
+    <style>
+        body { background-color: #faf2e4; margin: 0 15%; font-family: sans-serif; }
+        h1 { text-align: center; border-bottom: 1px solid #57b1dc; }
+        .container { max-width: 800px; margin: 20px auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
+        th { background: #57b1dc; color: white; }
+        .form-group { margin-bottom: 15px; }
+        label { display: inline-block; width: 120px; }
+        input[type="number"], input[type="text"] { padding: 8px; width: 200px; border-radius: 4px; border: 1px solid #ccc; }
+        input[type="submit"] { padding: 8px 20px; background: #57b1dc; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        .message { padding: 10px; margin: 10px 0; border-radius: 4px; }
+        .success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .logout { float: right; }
+    </style>
+</head>
+<body>
+    <h1>User Dashboard <span class="logout"><a href="LogoutServlet">Logout</a></span></h1>
+    <div class="container">
+        <h2>Submit a Deletion Request</h2>
+        <form action="SubmitRequestServlet" method="post">
+            <div class="form-group">
+                <label>Document ID:</label>
+                <input type="number" name="docId" required>
+            </div>
+            <div class="form-group">
+                <label>Incident Number:</label>
+                <input type="text" name="incidentNo" required>
+            </div>
+            <input type="submit" value="Submit Request">
+        </form>
 
- INSERT INTO sv_invoice_line
-        SELECT COMPANY_ID, BRANCH_ID, LOCATION_ID, CALL_OPEN_DATE, SERVICE_CALL_ID, TRX_SOURCE_REFERENCE_NUMBER, BATCH_ID, DOCUMENT_LINE_ID, BILL_OF_MATERIALS_ID, COST_CODE_ID, DOCUMENT_TYPE, DOCUMENT_ID, DOCUMENT_DATE, TRX_DESCRIPTION, BILLABLE, TAXABLE, TRX_SOURCE, TOTAL_BILLING, VENDOR_ID, EQUIPMENT_ID, POSTING_STATUS, VENDOR_FLAG, TECHNICIAN_ID, OVERHEAD_AMOUNT, TOTAL_COST, TRX_QUANTITY, ITEM_ID, UNIT_OF_MEASURE_ID, UNIT_PRICE, JOB_TITLE_ID, PAY_CODE_ID, MODIFIED_DATE, LANGUAGE_ID, MODIFIED_USER_ID, REVENUE_ACCOUNT_INDEX, REVENUE_JOURNAL_ENTRY_NBR, BASE_CURRENCY_ID, DESCRIPTION, UNIT_COST, COST_JOURNAL_ENTRY_NBR, BILLING_CURRENCY_ID, REPORTING_CURRENCY_ID, GL_DATE, PURCHASE_ORDER_NUMBER, ACTIVITY_ID, PHASE, PERCENT_WORK_COMPLETE, HOURS_WORK_REMAINING, COST_DEBIT_ACCOUNT_INDEX, COST_CREDIT_ACCOUNT_INDEX, CREDIT_ACCOUNT_BRANCH_ID, ERROR_ID, RECEIVABLE_ACCOUNT_INDEX, MEMO, USER_DEFINE_1, USER_DEFINE_2, USER_DEFINE_3, USER_DEFINE_4, USER_DEFINE_5, USER_DEFINE_6, UNIT_OF_MEASURE, SERIAL_NUMBER, BASE_COST, TOTAL_BASE_COST, CREATION_DATE
-        FROM sv_invoice_line_bkp
-        WHERE document_id = p_document_id
-          AND NOT EXISTS (
-                SELECT 1 FROM sv_invoice_line l
-                WHERE l.document_id = p_document_id
-              );
+        <!-- Display status message from servlet -->
+        <%
+            String msg = (String) request.getAttribute("message");
+            String type = (String) request.getAttribute("type");
+            if (msg != null) {
+        %>
+            <div class="message <%= type %>"><%= msg %></div>
+        <%
+            }
+        %>
 
+        <h2>Your Previous Requests</h2>
+        <table>
+            <tr>
+                <th>Request ID</th>
+                <th>Document ID</th>
+                <th>Incident No</th>
+                <th>Submitted Date</th>
+                <th>Status</th>
+                <th>Processed By</th>
+            </tr>
+            <%
+                // Show requests submitted by this user
+                String dbUrl = "jdbc:oracle:thin:@//SMTRND:1531/SMTRND";
+                String dbUser = "Linus";
+                String dbPass = "G4uh3yAW!";
+                String sql = "SELECT request_id, doc_id, incident_no, submitted_date, status, processed_by " +
+                             "FROM deletion_requests WHERE submitted_by = ? ORDER BY request_id DESC";
+                try (Connection conn = DriverManager.getConnection(dbUrl, dbUser, dbPass);
+                     PreparedStatement pst = conn.prepareStatement(sql)) {
+                    pst.setString(1, username);
+                    try (ResultSet rs = pst.executeQuery()) {
+                        while (rs.next()) {
+                            out.println("<tr>");
+                            out.println("<td>" + rs.getInt("request_id") + "</td>");
+                            out.println("<td>" + rs.getInt("doc_id") + "</td>");
+                            out.println("<td>" + rs.getString("incident_no") + "</td>");
+                            out.println("<td>" + rs.getTimestamp("submitted_date") + "</td>");
+                            out.println("<td>" + rs.getString("status") + "</td>");
+                            out.println("<td>" + (rs.getString("processed_by") != null ? rs.getString("processed_by") : "-") + "</td>");
+                            out.println("</tr>");
+                        }
+                    }
+                } catch (SQLException e) {
+                    out.println("<tr><td colspan='6'>Error loading data: " + e.getMessage() + "</td></tr>");
+                }
+            %>
+        </table>
+    </div>
+</body>
+</html>
+```
 
-    INSERT INTO sv_invoice_header_temp
-        SELECT COMPANY_ID, BRANCH_ID, LOCATION_ID, CALL_CONTRACT_DATE, CALL_CONTRACT_ID, DOCUMENT_ID, INVOICE_TYPE_ID, PRICE_MATRIX_GROUP_ID, LABOR_RATE_GROUP_ID, TAX_SCHEDULE_ID, INVOICE_NUMBER, BATCH_ID, INVOICE_COMMENT_ID_1, INVOICE_COMMENT_ID_2, COST_LABOR_CATEGORY_1, COST_LABOR_CATEGORY_2, COST_LABOR_CATEGORY_3, COST_LABOR_CATEGORY_4, COST_LABOR_CATEGORY_5, COST_EQUIPMENT, COST_MATERIAL, COST_SUBS, COST_OTHER, COST_FREIGHT, COST_TAX, BILLABLE_LABOR_CATEGORY_1, BILLABLE_LABOR_CATEGORY_2, BILLABLE_LABOR_CATEGORY_3, BILLABLE_LABOR_CATEGORY_4, BILLABLE_LABOR_CATEGORY_5, BILLABLE_EQUIPMENT, BILLABLE_MATERIAL, BILLABLE_SUBS, BILLABLE_OTHER, BILLABLE_FREIGHT, TAX_DETAIL_ID_1, TAX_AMOUNT_1, TAX_DETAIL_ID_2, TAX_AMOUNT_2, TAX_DETAIL_ID_3, TAX_AMOUNT_3, TAX_DETAIL_ID_4, TAX_AMOUNT_4, PAYMENT_TERMS_ID, ON_ACCOUNT, SHIPPING_METHOD_ID, CASH_AMOUNT, DOCUMENT_DATE, SALESPERSON_ID, COMMISSION_PERCENT, COMMISSION_PCT_OF_SALE, COMMISSION_EARNINGS, SALES_TERRITORY, SALESPERSON_ID_2, COMMISSION_PERCENT_2, COMMISSION_PCT_OF_SALE_2, COMMISSION_EARNINGS_2, SALES_TERRITORY_2, PURCHASE_ORDER_NUMBER, TRADE_DISCOUNT_AMOUNT, CHECKBOOK_ID_CHECK, CASH_DATE, DOCUMENT_NUMBER_CASH, CHECK_AMOUNT, CHECKBOOK_ID_CREDIT_CARD, CHECK_NUMBER, CHECK_DATE, DOCUMENT_NUMBER_CHECK, DOCUMENT_NBR_CREDIT_CARD, CREDIT_CARD_AMOUNT, CREDIT_CARD_NAME, RECEIPT_NUMBER_CREDIT_CARD, CREDIT_CARD_DATE, DISCOUNT_TAKEN_AMOUNT, CHECKBOOK_ID_CASH, POSTING_STATUS, POSTED_DATE, INVOICE_STYLE_ID, NO_TIMES_PRINTED, PRINTED_DATE, CHGD_SINCE_PRINTING_FLAG, DOCUMENT_AMOUNT, DISCOUNT_PERCENT_AMOUNT, DISCOUNT_DOLLAR_AMOUNT, DISCOUNT_AVAILABLE_AMOUNT, DISCOUNT_DATE, DUE_DATE, DATE_PAID, AMOUNT_RECEIVED, INVOICE_DESCRIPTION, MANUAL_SALES_DIST, MANUAL_COMMISSION_DIST, BILLING_CURRENCY_ID, BASE_CURRENCY_ID, REPORTING_CURRENCY_ID, BILL_TO_CUSTOMER_ID, CREDIT_MEMO_REASON, APPLY_TO_DOCUMENT_NBR, PRINTING_OPTION, MODIFIED_DATE, MODIFIED_USER_ID, LANGUAGE_ID, SPECIAL_INSTRUCTIONS, CUSTOMER_ID, SOURCE_CODE, ERROR_ID, SEND_TO_BILLING, CURRENCY_CODE, BILL_TO_CUSTOMER_NUMBER, CUSTOMER_NUMBER, INVOICE_NOTE, INVOICE_STYLE_DESCRIPTION, PAYMENT_TERMS, MASTER_CONTRACT_NUMBER, PRINTING_OPTION_ID, IS_CREDIT_MEMO, APPLY_TO_INVOICE_NBR, MASTER_CONTRACT_ID, PROFIT_CENTER_ID, JOB_NUMBER, JOB_SHORT_NAME, WORK_SITE_LOCATION_ID, WORK_SITE_LOCATION_NAME, WORK_SITE_ADDRESS_1, WORK_SITE_ADDRESS_2, WORK_SITE_ADDRESS_3, WORK_SITE_CITY, WORK_SITE_POSTAL_CODE, WORK_SITE_COUNTY, WORK_SITE_STATE, WORK_SITE_COUNTRY, WORK_SITE_IN_CITY_INDICATOR, NATIONAL_ACCOUNT, MASTER_INVOICE_STYLE_ID, MASTER_PRINTING_OPTION_ID, MASTER_INVOICE_STYLE_DESC, MASTER_PRINTING_OPTION_DESC, MASTER_PURCHASE_ORDER_NUMBER, MASTER_PAYMENT_TERMS_ID, MASTER_PAYMENT_TERMS, BRAND_ID, BRAND_SHORT_NAME, TR_TASK_NUMBER, TASK_ORGANIZATION_NAME, BILL_TO_CUSTOMER_NAME, PAYMENT_TERMS_DESCRIPTION, R12_INVOICE_TYPE, R12_BILL_GROUP, R12_COMPLETION_DATE, R12_STATUS, R12_LEGACY_SALES_ORDER_NUM, R12_INVOICE_PRINT_FORMAT, R12_PRINT_FLAG, R12_PRJ_BRANCH_NAME, R12_PRJ_PHONE, R12_PRJ_FAX, R12_PRJ_ADDRESS_1, R12_PRJ_ADDRESS_2, R12_PRJ_ADDRESS_3, R12_PRJ_CITY, R12_PRJ_STATE, R12_PRJ_POSTAL_CODE, CREATION_DATE, BILLING_STATUS, BILLING_STATUS_DATE, REVENUE_STATUS, REVENUE_STATUS_DATE, RELEASE_STATUS, RELEASE_STATUS_DATE, MODIFIED_BY_PROCESS
-        FROM sv_invoice_header_temp_bkp
-        WHERE document_id = p_document_id
-          AND NOT EXISTS (
-                SELECT 1 FROM sv_invoice_header_temp ht
-                WHERE ht.document_id = p_document_id
-              );
+---
 
+## 📤 4. Servlet: `SubmitRequestServlet`
 
-    INSERT INTO sv_invoice_line_temp
-        SELECT COMPANY_ID, BRANCH_ID, LOCATION_ID, CALL_CONTRACT_DATE, CALL_CONTRACT_ID, DOCUMENT_ID, DOCUMENT_LINE_ID, BATCH_ID, TRX_SOURCE, TRX_SOURCE_REFERENCE_NUMBER, TRX_DESCRIPTION, TRX_QUANTITY, COST_CODE_ID, DOCUMENT_TYPE, DOCUMENT_DATE, BILLABLE, TAXABLE, TOTAL_BILLING, VENDOR_ID, EQUIPMENT_ID, POSTING_STATUS, TECHNICIAN_ID, VENDOR_FLAG, OVERHEAD_AMOUNT, TOTAL_COST, UNIT_OF_MEASURE, ITEM_ID, UNIT_PRICE, JOB_TITLE_ID, PAY_CODE_ID, BASE_CURRENCY_ID, BILLING_CURRENCY_ID, REPORTING_CURRENCY_ID, REVENUE_JOURNAL_ENTRY_NUMBER, UNIT_COST, COST_JOURNAL_ENTRY_NBR, GL_DATE, PURCHASE_ORDER_NUMBER, ACTIVITY_ID, PHASE, PERCENT_WORK_COMPLETE, HOURS_WORK_REMAINING, RECEIVABLE_ACCOUNT_INDEX, REVENUE_ACCOUNT_INDEX, COST_DEBIT_ACCOUNT_INDEX, COST_CREDIT_ACCOUNT_INDEX, CREDIT_ACCOUNT_BRANCH_ID, DESCRIPTION, MODIFIED_DATE, MODIFIED_USER_ID, LANGUAGE_ID, ERROR_ID, CLAIM_NUMBER, COST_CODE_DESCRIPTION, PAY_TYPE, BILLING_FREQUENCY_DESCRIPTION, CONTRACT_TYPE, CONTRACT_NUMBER, UNIT_OF_MEASURE_ID, BILL_OF_MATERIALS_ID, MEMO, USER_DEFINE_1, USER_DEFINE_2, USER_DEFINE_3, USER_DEFINE_4, USER_DEFINE_5, USER_DEFINE_6, FIRST_NAME, MIDDLE_INITIAL, LAST_NAME, EXCHANGE_RATE, SERIAL_NUMBER, BASE_COST, TOTAL_BASE_COST, TOTAL_REVENUE
-        FROM sv_invoice_line_temp_bkp
-        WHERE document_id = p_document_id
-          AND NOT EXISTS (
-                SELECT 1 FROM sv_invoice_line_temp lt
-                WHERE lt.document_id = p_document_id
-              );
-              
-    DELETE FROM sv_invoice_line_temp_bkp      WHERE document_id = p_document_id;
-    DELETE FROM sv_invoice_header_temp_bkp    WHERE document_id = p_document_id;
-    DELETE FROM sv_invoice_line_bkp           WHERE document_id = p_document_id;
-    DELETE FROM sv_invoice_header_bkp         WHERE document_id = p_document_id;
+Handles the user’s submission – inserts a new row into `deletion_requests`.
 
-    COMMIT;
+```java
+package org.example;
 
-     log_event(
-        p_doc_id  => p_document_id,
-        p_ticket  => p_ticket,
-        p_action  => 'ROLLBACK_RESTORE',
-        p_status  => 'SUCCESS',
-        p_message => 'Data restored automatically from backup on ' || SYSDATE
-    );
+import javax.servlet.ServletException;
+import javax.servlet.annotation.WebServlet;
+import javax.servlet.http.HttpServlet;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import javax.servlet.http.HttpSession;
+import java.io.IOException;
+import java.sql.*;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
+@WebServlet("/SubmitRequestServlet")
+public class SubmitRequestServlet extends HttpServlet {
+    private static final long serialVersionUID = 1L;
+    private static final Logger LOGGER = Logger.getLogger(SubmitRequestServlet.class.getName());
 
-EXCEPTION
-    WHEN OTHERS THEN
-        ROLLBACK;
-        log_event(
-            p_doc_id  => p_document_id,
-            p_ticket  => p_ticket,
-            p_action  => 'ROLLBACK_RESTORE',
-            p_status  => 'FAILED',
-            p_message => 'Restore failed: ' || SQLERRM
-        );
-        RAISE;
-END restore_from_backup;
+    private static final String DB_URL = "jdbc:oracle:thin:@//SMTRND:1531/SMTRND";
+    private static final String DB_USER = "Linus";
+    private static final String DB_PASSWORD = "G4uh3yAW!";
 
+    @Override
+    protected void doPost(HttpServletRequest request, HttpServletResponse response)
+            throws ServletException, IOException {
 
-PROCEDURE backup_and_purge_invoice(
-    p_document_id IN NUMBER,
-    p_ticket      IN VARCHAR2
-) IS
-BEGIN
+        HttpSession session = request.getSession();
+        String username = (String) session.getAttribute("username");
+        if (username == null) {
+            response.sendRedirect("login.jsp");
+            return;
+        }
 
-    INSERT INTO sv_invoice_header_bkp
-        SELECT h.*, SYSDATE, USER, 'CLAIM DOCUMENT DELETION'
-        FROM sv_invoice_header h
-        WHERE document_id = p_document_id;
+        String docIdStr = request.getParameter("docId");
+        String incidentNo = request.getParameter("incidentNo");
 
-   INSERT INTO sv_invoice_header_temp_bkp
-        SELECT COMPANY_ID, BRANCH_ID, LOCATION_ID, CALL_CONTRACT_DATE, CALL_CONTRACT_ID, DOCUMENT_ID, INVOICE_TYPE_ID, PRICE_MATRIX_GROUP_ID, LABOR_RATE_GROUP_ID, TAX_SCHEDULE_ID, INVOICE_NUMBER, BATCH_ID, INVOICE_COMMENT_ID_1, INVOICE_COMMENT_ID_2, COST_LABOR_CATEGORY_1, COST_LABOR_CATEGORY_2, COST_LABOR_CATEGORY_3, COST_LABOR_CATEGORY_4, COST_LABOR_CATEGORY_5, COST_EQUIPMENT, COST_MATERIAL, COST_SUBS, COST_OTHER, COST_FREIGHT, COST_TAX, BILLABLE_LABOR_CATEGORY_1, BILLABLE_LABOR_CATEGORY_2, BILLABLE_LABOR_CATEGORY_3, BILLABLE_LABOR_CATEGORY_4, BILLABLE_LABOR_CATEGORY_5, BILLABLE_EQUIPMENT, BILLABLE_MATERIAL, BILLABLE_SUBS, BILLABLE_OTHER, BILLABLE_FREIGHT, TAX_DETAIL_ID_1, TAX_AMOUNT_1, TAX_DETAIL_ID_2, TAX_AMOUNT_2, TAX_DETAIL_ID_3, TAX_AMOUNT_3, TAX_DETAIL_ID_4, TAX_AMOUNT_4, PAYMENT_TERMS_ID, ON_ACCOUNT, SHIPPING_METHOD_ID, CASH_AMOUNT, DOCUMENT_DATE, SALESPERSON_ID, COMMISSION_PERCENT, COMMISSION_PCT_OF_SALE, COMMISSION_EARNINGS, SALES_TERRITORY, SALESPERSON_ID_2, COMMISSION_PERCENT_2, COMMISSION_PCT_OF_SALE_2, COMMISSION_EARNINGS_2, SALES_TERRITORY_2, PURCHASE_ORDER_NUMBER, TRADE_DISCOUNT_AMOUNT, CHECKBOOK_ID_CHECK, CASH_DATE, DOCUMENT_NUMBER_CASH, CHECK_AMOUNT, CHECKBOOK_ID_CREDIT_CARD, CHECK_NUMBER, CHECK_DATE, DOCUMENT_NUMBER_CHECK, DOCUMENT_NBR_CREDIT_CARD, CREDIT_CARD_AMOUNT, CREDIT_CARD_NAME, RECEIPT_NUMBER_CREDIT_CARD, CREDIT_CARD_DATE, DISCOUNT_TAKEN_AMOUNT, CHECKBOOK_ID_CASH, POSTING_STATUS, POSTED_DATE, INVOICE_STYLE_ID, NO_TIMES_PRINTED, PRINTED_DATE, CHGD_SINCE_PRINTING_FLAG, DOCUMENT_AMOUNT, DISCOUNT_PERCENT_AMOUNT, DISCOUNT_DOLLAR_AMOUNT, DISCOUNT_AVAILABLE_AMOUNT, DISCOUNT_DATE, DUE_DATE, DATE_PAID, AMOUNT_RECEIVED, INVOICE_DESCRIPTION, MANUAL_SALES_DIST, MANUAL_COMMISSION_DIST, BILLING_CURRENCY_ID, BASE_CURRENCY_ID, REPORTING_CURRENCY_ID, BILL_TO_CUSTOMER_ID, CREDIT_MEMO_REASON, APPLY_TO_DOCUMENT_NBR, PRINTING_OPTION, MODIFIED_DATE, MODIFIED_USER_ID, LANGUAGE_ID, SPECIAL_INSTRUCTIONS, CUSTOMER_ID, SOURCE_CODE, ERROR_ID, SEND_TO_BILLING, CURRENCY_CODE, BILL_TO_CUSTOMER_NUMBER, CUSTOMER_NUMBER, 
- to_lob(INVOICE_NOTE), INVOICE_STYLE_DESCRIPTION, PAYMENT_TERMS, MASTER_CONTRACT_NUMBER, PRINTING_OPTION_ID, IS_CREDIT_MEMO, APPLY_TO_INVOICE_NBR, MASTER_CONTRACT_ID, PROFIT_CENTER_ID, JOB_NUMBER, JOB_SHORT_NAME, WORK_SITE_LOCATION_ID, WORK_SITE_LOCATION_NAME, WORK_SITE_ADDRESS_1, WORK_SITE_ADDRESS_2, WORK_SITE_ADDRESS_3, WORK_SITE_CITY, WORK_SITE_POSTAL_CODE, WORK_SITE_COUNTY, WORK_SITE_STATE, WORK_SITE_COUNTRY, WORK_SITE_IN_CITY_INDICATOR, NATIONAL_ACCOUNT, MASTER_INVOICE_STYLE_ID, MASTER_PRINTING_OPTION_ID, MASTER_INVOICE_STYLE_DESC, MASTER_PRINTING_OPTION_DESC, MASTER_PURCHASE_ORDER_NUMBER, MASTER_PAYMENT_TERMS_ID, MASTER_PAYMENT_TERMS, BRAND_ID, BRAND_SHORT_NAME, TR_TASK_NUMBER, TASK_ORGANIZATION_NAME, BILL_TO_CUSTOMER_NAME, PAYMENT_TERMS_DESCRIPTION, R12_INVOICE_TYPE, R12_BILL_GROUP, R12_COMPLETION_DATE, R12_STATUS, R12_LEGACY_SALES_ORDER_NUM, R12_INVOICE_PRINT_FORMAT, R12_PRINT_FLAG, R12_PRJ_BRANCH_NAME, R12_PRJ_PHONE, R12_PRJ_FAX, R12_PRJ_ADDRESS_1, R12_PRJ_ADDRESS_2, R12_PRJ_ADDRESS_3, R12_PRJ_CITY, R12_PRJ_STATE, R12_PRJ_POSTAL_CODE, CREATION_DATE, BILLING_STATUS, BILLING_STATUS_DATE, REVENUE_STATUS, REVENUE_STATUS_DATE, RELEASE_STATUS, RELEASE_STATUS_DATE, MODIFIED_BY_PROCESS
-        ,SYSDATE,
-        USER,
-        'CLAIM DOCUMENT DELETION'
-    FROM sv_invoice_header_temp h 
-    WHERE document_id = p_document_id;
+        if (docIdStr == null || docIdStr.trim().isEmpty() ||
+            incidentNo == null || incidentNo.trim().isEmpty()) {
+            request.setAttribute("message", "Both fields are required.");
+            request.setAttribute("type", "error");
+            request.getRequestDispatcher("user.jsp").forward(request, response);
+            return;
+        }
 
-    INSERT INTO sv_invoice_line_bkp
-        SELECT l.*, SYSDATE, USER, 'CLAIM DOCUMENT DELETION'
-        FROM sv_invoice_line l
-        WHERE document_id = p_document_id;
+        long docId;
+        try {
+            docId = Long.parseLong(docIdStr.trim());
+        } catch (NumberFormatException e) {
+            request.setAttribute("message", "Document ID must be a number.");
+            request.setAttribute("type", "error");
+            request.getRequestDispatcher("user.jsp").forward(request, response);
+            return;
+        }
 
-    INSERT INTO sv_invoice_line_temp_bkp
-        SELECT lt.*, SYSDATE, USER, 'CLAIM DOCUMENT DELETION'
-        FROM sv_invoice_line_temp lt
-        WHERE document_id = p_document_id;
+        // Insert into deletion_requests
+        String insertSql = "INSERT INTO deletion_requests (request_id, doc_id, incident_no, submitted_by, status) " +
+                           "VALUES (deletion_requests_seq.NEXTVAL, ?, ?, ?, 'PENDING')";
 
+        try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
+             PreparedStatement pst = conn.prepareStatement(insertSql)) {
 
-    DELETE FROM sv_invoice_line_temp      WHERE document_id = p_document_id;
-    DELETE FROM sv_invoice_header_temp    WHERE document_id = p_document_id;
-    DELETE FROM sv_invoice_line           WHERE document_id = p_document_id;
-    DELETE FROM sv_invoice_header         WHERE document_id = p_document_id;
+            pst.setLong(1, docId);
+            pst.setString(2, incidentNo);
+            pst.setString(3, username);
+            int rows = pst.executeUpdate();
 
-    COMMIT;
+            if (rows > 0) {
+                request.setAttribute("message", "Request submitted successfully!");
+                request.setAttribute("type", "success");
+            } else {
+                request.setAttribute("message", "Submission failed.");
+                request.setAttribute("type", "error");
+            }
+            LOGGER.info("User " + username + " submitted deletion request for doc " + docId);
 
-   log_event(
-        p_doc_id  => p_document_id,
-        p_ticket  => p_ticket,
-        p_action  => 'BACKUP_PURGE',
-        p_status  => 'SUCCESS',
-        p_message => 'Invoice deleted successfully on ' || SYSDATE
-    );
+        } catch (SQLException e) {
+            LOGGER.log(Level.SEVERE, "Insert error", e);
+            request.setAttribute("message", "Database error: " + e.getMessage());
+            request.setAttribute("type", "error");
+        }
 
-EXCEPTION
-     WHEN OTHERS THEN
-        ROLLBACK;
+        request.getRequestDispatcher("user.jsp").forward(request, response);
+    }
+}
+```
 
-        log_event(
-            p_doc_id  => p_document_id,
-            p_ticket  => p_ticket,
-            p_action  => 'BACKUP_PURGE',
-            p_status  => 'FAILED',
-            p_message => 'Error occurred: ' || SQLERRM || ' — Starting auto-restore...'
-        );
+---
 
-        restore_from_backup(p_document_id, p_ticket);
-END backup_and_purge_invoice;
+## 👑 5. Admin Page: `admin.jsp`
 
-PROCEDURE process_invoice_deletion(
-    p_document_id IN NUMBER,
-    p_ticket      IN VARCHAR2
-) IS
-BEGIN
-    -- Step 1: Validate invoice using existing function
-      IF NOT validate_invoice(p_document_id) THEN
-        log_event(
-            p_doc_id  => p_document_id,
-            p_ticket  => p_ticket,
-            p_action  => 'VALIDATION_FAILED',
-            p_status  => 'FAILED',
-            p_message => 'Invoice failed validation and cannot be deleted. Checked on ' || SYSDATE
-        );
-        RETURN;
-    END IF;
+Admin sees all pending requests and can delete each one. Also shows history.
 
-    -- Step 2: If valid, call the original procedure
-     backup_and_purge_invoice(p_document_id, p_ticket);
+```jsp
+<%@ page language="java" contentType="text/html; charset=UTF-8" pageEncoding="UTF-8" %>
+<%@ page import="java.sql.*" %>
+<%
+    String username = (String) session.getAttribute("username");
+    String role = (String) session.getAttribute("role");
+    if (username == null || !"ADMIN".equalsIgnoreCase(role)) {
+        response.sendRedirect("login.jsp");
+        return;
+    }
+%>
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Admin Dashboard</title>
+    <style>
+        body { background-color: #faf2e4; margin: 0 15%; font-family: sans-serif; }
+        h1 { text-align: center; border-bottom: 1px solid #57b1dc; }
+        .container { max-width: 1000px; margin: 20px auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
+        th { background: #57b1dc; color: white; }
+        .btn-delete { background: #dc3545; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; }
+        .btn-delete:hover { background: #c82333; }
+        .logout { float: right; }
+        .message { padding: 10px; margin: 10px 0; border-radius: 4px; }
+        .success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .info { background: #d1ecf1; color: #0c5460; border: 1px solid #bee5eb; }
+        hr { margin: 30px 0; }
+    </style>
+</head>
+<body>
+    <h1>Admin Dashboard <span class="logout"><a href="LogoutServlet">Logout</a></span></h1>
 
-EXCEPTION
-    WHEN OTHERS THEN
-        log_event(
-            p_doc_id  => p_document_id,
-            p_ticket  => p_ticket,
-            p_action  => 'PROCESS_INVOICE_DELETION',
-            p_status  => 'FAILED',
-            p_message => 'Unexpected error in wrapper: ' || SQLERRM
-        );
-        RAISE;
-END process_invoice_deletion;
+    <div class="container">
+        <%
+            String msg = (String) request.getAttribute("message");
+            String type = (String) request.getAttribute("type");
+            if (msg != null) {
+        %>
+            <div class="message <%= type %>"><%= msg %></div>
+        <%
+            }
+        %>
 
-END pkg_claim_document_deletion;
+        <h2>Pending Deletion Requests</h2>
+        <table>
+            <tr>
+                <th>Request ID</th>
+                <th>Document ID</th>
+                <th>Incident No</th>
+                <th>Submitted By</th>
+                <th>Submitted Date</th>
+                <th>Action</th>
+            </tr>
+            <%
+                String dbUrl = "jdbc:oracle:thin:@//SMTRND:1531/SMTRND";
+                String dbUser = "Linus";
+                String dbPass = "G4uh3yAW!";
+                String sql = "SELECT request_id, doc_id, incident_no, submitted_by, submitted_date " +
+                             "FROM deletion_requests WHERE status = 'PENDING' ORDER BY request_id";
+                try (Connection conn = DriverManager.getConnection(dbUrl, dbUser, dbPass);
+                     Statement stmt = conn.createStatement();
+                     ResultSet rs = stmt.executeQuery(sql)) {
+                    if (!rs.isBeforeFirst()) {
+                        out.println("<tr><td colspan='6'>No pending requests.</td></tr>");
+                    } else {
+                        while (rs.next()) {
+                            out.println("<tr>");
+                            out.println("<td>" + rs.getInt("request_id") + "</td>");
+                            out.println("<td>" + rs.getInt("doc_id") + "</td>");
+                            out.println("<td>" + rs.getString("incident_no") + "</td>");
+                            out.println("<td>" + rs.getString("submitted_by") + "</td>");
+                            out.println("<td>" + rs.getTimestamp("submitted_date") + "</td>");
+                            // Form to delete this request
+                            out.println("<td>");
+                            out.println("<form action='AdminProcessServlet' method='post'>");
+                            out.println("<input type='hidden' name='requestId' value='" + rs.getInt("request_id") + "'>");
+                            out.println("<button type='submit' class='btn-delete' onclick='return confirm(\"Execute deletion for this request?\")'>Delete</button>");
+                            out.println("</form>");
+                            out.println("</td>");
+                            out.println("</tr>");
+                        }
+                    }
+                } catch (SQLException e) {
+                    out.println("<tr><td colspan='6'>Error loading data: " + e.getMessage() + "</td></tr>");
+                }
+            %>
+        </table>
+
+        <hr>
+
+        <h2>Deletion History</h2>
+        <table>
+            <tr>
+                <th>Request ID</th>
+                <th>Document ID</th>
+                <th>Incident No</th>
+                <th>Submitted By</th>
+                <th>Status</th>
+                <th>Processed By</th>
+                <th>Processed Date</th>
+            </tr>
+            <%
+                String historySql = "SELECT request_id, doc_id, incident_no, submitted_by, status, processed_by, processed_date " +
+                                    "FROM deletion_requests WHERE status != 'PENDING' ORDER BY request_id DESC";
+                try (Connection conn = DriverManager.getConnection(dbUrl, dbUser, dbPass);
+                     Statement stmt = conn.createStatement();
+                     ResultSet rs = stmt.executeQuery(historySql)) {
+                    if (!rs.isBeforeFirst()) {
+                        out.println("<tr><td colspan='7'>No history.</td></tr>");
+                    } else {
+                        while (rs.next()) {
+                            out.println("<tr>");
+                            out.println("<td>" + rs.getInt("request_id") + "</td>");
+                            out.println("<td>" + rs.getInt("doc_id") + "</td>");
+                            out.println("<td>" + rs.getString("incident_no") + "</td>");
+                            out.println("<td>" + rs.getString("submitted_by") + "</td>");
+                            out.println("<td>" + rs.getString("status") + "</td>");
+                            out.println("<td>" + (rs.getString("processed_by") != null ? rs.getString("processed_by") : "-") + "</td>");
+                            out.println("<td>" + (rs.getTimestamp("processed_date") != null ? rs.getTimestamp("processed_date") : "-") + "</td>");
+                            out.println("</tr>");
+                        }
+                    }
+                } catch (SQLException e) {
+                    out.println("<tr><td colspan='7'>Error loading history: " + e.getMessage() + "</td></tr>");
+                }
+            %>
+        </table>
+    </div>
+</body>
+</html>
+```
+
+---
+
+## 🗑️ 6. Servlet: `AdminProcessServlet`
+
+This servlet:
+- Receives a `requestId`
+- Fetches `doc_id` and `incident_no` from the table
+- Calls the stored procedure
+- Updates the request status to `DELETED` (or `FAILED`) and records the admin
+
+```java
+package org.example;
+
+import javax.servlet.ServletException;
+import javax.servlet.annotation.WebServlet;
+import javax.servlet.http.HttpServlet;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import javax.servlet.http.HttpSession;
+import java.io.IOException;
+import java.sql.*;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
+@WebServlet("/AdminProcessServlet")
+public class AdminProcessServlet extends HttpServlet {
+    private static final long serialVersionUID = 1L;
+    private static final Logger LOGGER = Logger.getLogger(AdminProcessServlet.class.getName());
+
+    private static final String DB_URL = "jdbc:oracle:thin:@//SMTRND:1531/SMTRND";
+    private static final String DB_USER = "Linus";
+    private static final String DB_PASSWORD = "G4uh3yAW!";
+
+    @Override
+    protected void doPost(HttpServletRequest request, HttpServletResponse response)
+            throws ServletException, IOException {
+
+        HttpSession session = request.getSession();
+        String admin = (String) session.getAttribute("username");
+        if (admin == null || !"ADMIN".equalsIgnoreCase((String) session.getAttribute("role"))) {
+            response.sendRedirect("login.jsp");
+            return;
+        }
+
+        String requestIdStr = request.getParameter("requestId");
+        if (requestIdStr == null || requestIdStr.trim().isEmpty()) {
+            request.setAttribute("message", "Missing request ID.");
+            request.setAttribute("type", "error");
+            request.getRequestDispatcher("admin.jsp").forward(request, response);
+            return;
+        }
+
+        int requestId;
+        try {
+            requestId = Integer.parseInt(requestIdStr.trim());
+        } catch (NumberFormatException e) {
+            request.setAttribute("message", "Invalid request ID.");
+            request.setAttribute("type", "error");
+            request.getRequestDispatcher("admin.jsp").forward(request, response);
+            return;
+        }
+
+        // Fetch doc_id and incident_no for this request
+        String selectSql = "SELECT doc_id, incident_no FROM deletion_requests WHERE request_id = ? AND status = 'PENDING'";
+        long docId = 0;
+        String incidentNo = null;
+
+        try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
+             PreparedStatement pst = conn.prepareStatement(selectSql)) {
+            pst.setInt(1, requestId);
+            try (ResultSet rs = pst.executeQuery()) {
+                if (rs.next()) {
+                    docId = rs.getLong("doc_id");
+                    incidentNo = rs.getString("incident_no");
+                } else {
+                    request.setAttribute("message", "Request not found or already processed.");
+                    request.setAttribute("type", "error");
+                    request.getRequestDispatcher("admin.jsp").forward(request, response);
+                    return;
+                }
+            }
+        } catch (SQLException e) {
+            LOGGER.log(Level.SEVERE, "Fetch error", e);
+            request.setAttribute("message", "DB error: " + e.getMessage());
+            request.setAttribute("type", "error");
+            request.getRequestDispatcher("admin.jsp").forward(request, response);
+            return;
+        }
+
+        // Now call the stored procedure
+        String procCall = "{ call linus.pkg_claim_document_deletion.process_invoice_deletion(?, ?) }";
+        boolean success = false;
+        String statusUpdate = "FAILED";
+        try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
+             CallableStatement cstmt = conn.prepareCall(procCall)) {
+
+            cstmt.setLong(1, docId);
+            cstmt.setString(2, incidentNo);
+            cstmt.execute();
+            success = true;
+            statusUpdate = "DELETED";
+            LOGGER.info("Admin " + admin + " deleted doc " + docId + " (request " + requestId + ")");
+
+        } catch (SQLException e) {
+            LOGGER.log(Level.SEVERE, "Procedure execution failed", e);
+            // still update status to FAILED
+        }
+
+        // Update the request status
+        String updateSql = "UPDATE deletion_requests SET status = ?, processed_by = ?, processed_date = CURRENT_TIMESTAMP " +
+                           "WHERE request_id = ?";
+        try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
+             PreparedStatement pst = conn.prepareStatement(updateSql)) {
+            pst.setString(1, statusUpdate);
+            pst.setString(2, admin);
+            pst.setInt(3, requestId);
+            pst.executeUpdate();
+        } catch (SQLException e) {
+            LOGGER.log(Level.SEVERE, "Update status failed", e);
+        }
+
+        // Set message
+        if (success) {
+            request.setAttribute("message", "Document " + docId + " deleted successfully.");
+            request.setAttribute("type", "success");
+        } else {
+            request.setAttribute("message", "Deletion failed. Check logs for details.");
+            request.setAttribute("type", "error");
+        }
+        request.getRequestDispatcher("admin.jsp").forward(request, response);
+    }
+}
+```
+
+---
+
+## 🚪 7. Logout Servlet (`LogoutServlet`)
+
+Simple logout to clear session.
+
+```java
+package org.example;
+
+import javax.servlet.ServletException;
+import javax.servlet.annotation.WebServlet;
+import javax.servlet.http.HttpServlet;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import javax.servlet.http.HttpSession;
+import java.io.IOException;
+
+@WebServlet("/LogoutServlet")
+public class LogoutServlet extends HttpServlet {
+    private static final long serialVersionUID = 1L;
+    @Override
+    protected void doGet(HttpServletRequest request, HttpServletResponse response)
+            throws ServletException, IOException {
+        HttpSession session = request.getSession(false);
+        if (session != null) session.invalidate();
+        response.sendRedirect("login.jsp");
+    }
+}
+```
+
+---
+
+## 📁 8. Login Page (`login.jsp`)
+
+If you don’t have one, use this (or adapt your existing). It uses `textName` and `textpwd` to match your `LoginServlet`.
+
+```jsp
+<%@ page language="java" contentType="text/html; charset=UTF-8" pageEncoding="UTF-8" %>
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Login</title>
+    <style>
+        body { background-color: #faf2e4; margin: 0 15%; font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; }
+        .container { max-width: 400px; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); text-align: center; }
+        input { width: 100%; padding: 10px; margin: 10px 0; border-radius: 4px; border: 1px solid #ccc; box-sizing: border-box; }
+        input[type="submit"] { background: #57b1dc; color: white; border: none; cursor: pointer; }
+        input[type="submit"]:hover { background: #4682b4; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Login</h2>
+        <form action="LoginServlet" method="post">
+            <input type="text" name="textName" placeholder="Username" required>
+            <input type="password" name="textpwd" placeholder="Password" required>
+            <input type="submit" value="Login">
+        </form>
+    </div>
+</body>
+</html>
+```
+
+---
+
+## 📦 Deployment Overview
+
+1. **Run the SQL scripts** to create the table and update the role column.
+2. **Place all JSP files** (`login.jsp`, `user.jsp`, `admin.jsp`) in your web root.
+3. **Compile all servlets** (`LoginServlet`, `SubmitRequestServlet`, `AdminProcessServlet`, `LogoutServlet`) – all in package `org.example`.
+4. **Ensure `ojdbc8.jar` is in `WEB-INF/lib`**.
+5. **Restart Tomcat**.
+6. **Access** `http://localhost:8080/yourapp/login.jsp`.
+
+---
+
+## ✅ Flow Summary
+
+1. **User logs in** – role is stored in session.
+2. **If user** → redirected to `user.jsp` → can submit requests → stored in DB with `PENDING`.
+3. **If admin** → redirected to `admin.jsp` → sees pending requests → clicks **Delete** → the servlet calls the stored procedure, updates status to `DELETED` or `FAILED`.
+4. **Both can view history** (users see only their own, admins see all).
+
+All code is **Java 1.8 compatible** – no lambdas, no modules, pure JDBC + Servlets + JSP.  
+
+Now you have a complete workflow – from user submission to admin approval and execution. Let me know if you need any tweaks!
