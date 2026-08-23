@@ -2,10 +2,11 @@ package com.pamula;
 
 import java.io.IOException;
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 import javax.servlet.ServletException;
 import javax.servlet.annotation.WebServlet;
@@ -13,54 +14,60 @@ import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
+import com.pamula.util.DBConnection;
+
 @WebServlet("/LoginServlet")
 public class LoginServlet extends HttpServlet {
-	private static final long serialVersionUID = 1L;
+    private static final long serialVersionUID = 1L;
 
-	// Database constants (in production, move to a properties file or JNDI)
-//	private static final String DB_URL = "jdbc:oracle:thin:@SMTRND:1531:SMTRND";
-	private static final String DB_URL = "jdbc:oracle:thin:@//SMTRND:1531/SMTRND";
+    // Use java.util.logging (or switch to SLF4J if you have it)
+    private static final Logger LOGGER = Logger.getLogger(LoginServlet.class.getName());
 
-	private static final String DB_USER = "Linus";
-	private static final String DB_PASSWORD = "G4uh3yAW!";
-	private static final String SQL_SELECT = "SELECT * FROM SV_USER WHERE USER_ID = ? AND PASSWORD = ?";
+    private static final String SQL_SELECT = "SELECT * FROM SV_USER WHERE USER_ID = ? AND PASSWORD = ?";
 
-	@Override
-	protected void doPost(HttpServletRequest request, HttpServletResponse response)
-			throws ServletException, IOException {
+    @Override
+    protected void doGet(HttpServletRequest request, HttpServletResponse response)
+            throws ServletException, IOException {
+        // Optionally forward to a login page or simply call doPost
+        doPost(request, response);
+    }
 
-		String username = request.getParameter("textName");
-		String password = request.getParameter("textpwd");
+    @Override
+    protected void doPost(HttpServletRequest request, HttpServletResponse response)
+            throws ServletException, IOException {
 
-		// Basic input validation
-		if (username == null || username.trim().isEmpty() ||
-				password == null || password.trim().isEmpty()) {
-			response.sendRedirect(request.getContextPath() + "/Error.jsp");
-			return;
-		}
+        String username = request.getParameter("textName");
+        String password = request.getParameter("textpwd");
 
-		// Use try-with-resources to automatically close Connection, PreparedStatement, ResultSet
-		try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
-			 PreparedStatement pst = conn.prepareStatement(SQL_SELECT)) {
+        // 1. Input validation
+        if (username == null || username.trim().isEmpty() ||
+            password == null || password.trim().isEmpty()) {
+            LOGGER.warning("Login attempt with empty credentials");
+            response.sendRedirect(request.getContextPath() + "/Error.jsp");
+            return;
+        }
 
-			pst.setString(1, username);
-			pst.setString(2, password);
+        // 2. Authenticate user
+        try (Connection conn = DBConnection.getConnection();
+             PreparedStatement pst = conn.prepareStatement(SQL_SELECT)) {
 
-			try (ResultSet rs = pst.executeQuery()) {
-				if (rs.next()) {
-					// Login successful
-					response.sendRedirect(request.getContextPath() + "/Succes.jsp");
-				} else {
-					// Invalid credentials
-					response.sendRedirect(request.getContextPath() + "/Error.jsp");
-				}
-			}
-		} catch (SQLException e) {
-			// Log the real error (check your server logs)
-			System.err.println("Login error for user: " + username);
-			e.printStackTrace(System.err);
-			// Redirect to error page
-			response.sendRedirect(request.getContextPath() + "/Error.jsp");
-		}
-	}
+            pst.setString(1, username);
+            pst.setString(2, password);
+
+            try (ResultSet rs = pst.executeQuery()) {
+                if (rs.next()) {
+                    LOGGER.info("User logged in successfully: " + username);
+                    response.sendRedirect(request.getContextPath() + "/Succes.jsp");
+                } else {
+                    LOGGER.info("Failed login attempt for user: " + username);
+                    response.sendRedirect(request.getContextPath() + "/Error.jsp");
+                }
+            }
+
+        } catch (SQLException e) {
+            // Log the full error for debugging, but show a generic error page to the user
+            LOGGER.log(Level.SEVERE, "Database error during login for user: " + username, e);
+            response.sendRedirect(request.getContextPath() + "/Error.jsp");
+        }
+    }
 }
