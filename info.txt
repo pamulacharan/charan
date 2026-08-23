@@ -1,67 +1,59 @@
-package com.pamula;
+<%@ page language="java" contentType="text/html; charset=ISO-8859-1" pageEncoding="ISO-8859-1"%>
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="ISO-8859-1">
+    <title>Success Page</title>
+    <style>
+        body {
+            background-color: #abcdef;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            font-family: Arial, sans-serif;
+        }
 
-import java.io.IOException;
-import java.sql.DriverManager;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import javax.servlet.ServletException;
-import javax.servlet.annotation.WebServlet;
-import javax.servlet.http.HttpServlet;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
+        h1 {
+            color: #ffffff;
+            background-color: #55aaff;
+            padding: 10px;
+            border-radius: 5px;
+            animation: fadeIn 1s ease-in-out;
+        }
 
-/**
- * Servlet implementation class LoginServlet
- */
-@WebServlet("/LoginServlet")
-public class LoginServlet extends HttpServlet {
-	private static final long serialVersionUID = 1L;
-       
-//    /**
-//     * @see HttpServlet#HttpServlet()
-//     */
-//    public LoginServlet() {
-//        super();
-//        // TODO Auto-generated constructor stub
-//    }
-//
-//	/**
-//	 * @see HttpServlet#doGet(HttpServletRequest request, HttpServletResponse response)
-//	 */
-//	protected void doGet(HttpServletRequest request, HttpServletResponse response) throws ServletException, IOException {
-//		// TODO Auto-generated method stub
-//		response.getWriter().append("Served at: ").append(request.getContextPath());
-//	}
-//
-//	/**
-//	 * @see HttpServlet#doPost(HttpServletRequest request, HttpServletResponse response)
-//	 */
-	protected void doPost(HttpServletRequest request, HttpServletResponse response) throws ServletException, IOException {
-//		// TODO Auto-generated method stub
-//		doGet(request, response);
-		try {
-			Class.forName("com.mysql.jdbc.Driver");
-			Connection con = DriverManager.getConnection("jdbc:mysql://localhost:3306/samplelogin_ids_pws","root","Charan@#1998");
-			String name = request.getParameter("textName");
-			String password = request.getParameter("textpwd");
-			PreparedStatement pst = con.prepareStatement("SELECT * FROM login WHERE username=? AND password=?");
-			/***
-			 charan	Charan@1998
-			 pamula	Charan@1998
-			 */
-			pst.setString(1, name);
-			pst.setString(2, password);
-			ResultSet rs = pst.executeQuery();
-			if (rs.next()) {
-				response.sendRedirect("Succes.jsp");
-			} else {
-				response.sendRedirect("Error.jsp");
-			}
-			
-		} catch (Exception e) {
-			// TODO: handle exception
-		}
-	}
+        h2 {
+            color: #333333;
+            font-size: 24px;
+            margin-top: 20px;
+            animation: slideInLeft 1s ease-in-out;
+        }
 
-}
+        /* Keyframe animations */
+        @keyframes fadeIn {
+            0% {
+                opacity: 0;
+            }
+            100% {
+                opacity: 1;
+            }
+        }
+
+        @keyframes slideInLeft {
+            0% {
+                transform: translateX(-50px);
+                opacity: 0;
+            }
+            100% {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+    </style>
+</head>
+<body>
+    <h1>Success Page</h1>
+    <h2>Login Successful!</h2>
+</body>
+</html>
