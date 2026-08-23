@@ -1,73 +1,36 @@
-package com.pamula;
+//DBConnection.java
+package com.pamula.util;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
+import java.sql.DriverManager;
 import java.sql.SQLException;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import java.util.Properties;
 
-import javax.servlet.ServletException;
-import javax.servlet.annotation.WebServlet;
-import javax.servlet.http.HttpServlet;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
+public class DBConnection {
 
-import com.pamula.util.DBConnection;
+    private static final Properties props = new Properties();
 
-@WebServlet("/LoginServlet")
-public class LoginServlet extends HttpServlet {
-    private static final long serialVersionUID = 1L;
-
-    // Use java.util.logging (or switch to SLF4J if you have it)
-    private static final Logger LOGGER = Logger.getLogger(LoginServlet.class.getName());
-
-    private static final String SQL_SELECT = "SELECT * FROM SV_USER WHERE USER_ID = ? AND PASSWORD = ?";
-
-    @Override
-    protected void doGet(HttpServletRequest request, HttpServletResponse response)
-            throws ServletException, IOException {
-        // Optionally forward to a login page or simply call doPost
-        doPost(request, response);
+    static {
+        try (InputStream input = DBConnection.class.getClassLoader()
+                .getResourceAsStream("db.properties")) {
+            if (input == null) {
+                throw new RuntimeException("db.properties not found in classpath");
+            }
+            props.load(input);
+            // Optional: manually load Oracle driver (not required for JDBC 4+)
+            // Class.forName("oracle.jdbc.driver.OracleDriver");
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to load database properties", e);
+        }
     }
 
-    @Override
-    protected void doPost(HttpServletRequest request, HttpServletResponse response)
-            throws ServletException, IOException {
-
-        String username = request.getParameter("textName");
-        String password = request.getParameter("textpwd");
-
-        // 1. Input validation
-        if (username == null || username.trim().isEmpty() ||
-            password == null || password.trim().isEmpty()) {
-            LOGGER.warning("Login attempt with empty credentials");
-            response.sendRedirect(request.getContextPath() + "/Error.jsp");
-            return;
-        }
-
-        // 2. Authenticate user
-        try (Connection conn = DBConnection.getConnection();
-             PreparedStatement pst = conn.prepareStatement(SQL_SELECT)) {
-
-            pst.setString(1, username);
-            pst.setString(2, password);
-
-            try (ResultSet rs = pst.executeQuery()) {
-                if (rs.next()) {
-                    LOGGER.info("User logged in successfully: " + username);
-                    response.sendRedirect(request.getContextPath() + "/Succes.jsp");
-                } else {
-                    LOGGER.info("Failed login attempt for user: " + username);
-                    response.sendRedirect(request.getContextPath() + "/Error.jsp");
-                }
-            }
-
-        } catch (SQLException e) {
-            // Log the full error for debugging, but show a generic error page to the user
-            LOGGER.log(Level.SEVERE, "Database error during login for user: " + username, e);
-            response.sendRedirect(request.getContextPath() + "/Error.jsp");
-        }
+    public static Connection getConnection() throws SQLException {
+        return DriverManager.getConnection(
+                props.getProperty("db.url"),
+                props.getProperty("db.username"),
+                props.getProperty("db.password")
+        );
     }
 }
