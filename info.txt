@@ -1,124 +1,129 @@
 <!DOCTYPE html>
-<html>
-  <head>
-    <title>Main page</title>
-    <meta http-equiv="Content-Type" content="text/html;charset=utf-8">
-    <script type="text/javascript" charset="utf-8" src="teavm/classes.js"></script>
-    <meta charset="ISO-8859-1">
-    <link rel='stylesheet' type="text/css" href='bootstrap.min.css'>
-    <link rel='stylesheet' type="text/css" href='calculator.css'>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Admin Login Page</title>
+    
+    <!-- External styles (keep if you have these files) -->
+    <link rel="stylesheet" type="text/css" href="bootstrap.min.css">
+    <link rel="stylesheet" type="text/css" href="calculator.css">
+    
     <style>
-      p {
-          color: red;
-      }
+        body {
+            background-color: #faf2e4;
+            margin: 0 15%;
+            font-family: sans-serif;
+        }
 
-      p {
-          color: blue;
-      }
+        h1 {
+            text-align: center;
+            font-family: serif;
+            font-weight: normal;
+            text-transform: uppercase;
+            border-bottom: 1px solid #57b1dc;
+            margin-top: 30px;
+        }
 
-      p {
-          color: green;
-      }
+        h2 {
+            color: #d1633c;
+            font-size: 1.2em;
+            text-align: center;
+        }
+
+        h3 {
+            text-align: center;
+            font-weight: normal;
+        }
+
+        .login-container {
+            max-width: 400px;
+            margin: 0 auto;
+            padding: 20px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        input[type="text"],
+        input[type="password"] {
+            width: 100%;
+            padding: 10px;
+            border-radius: 5px;
+            border: 1px solid #ccc;
+            background-color: #f5f5f5;
+            box-sizing: border-box;
+        }
+
+        input[type="submit"] {
+            width: 100%;
+            padding: 10px 20px;
+            border-radius: 5px;
+            border: none;
+            background-color: #57b1dc;
+            color: #fff;
+            font-size: 16px;
+            cursor: pointer;
+        }
+
+        input[type="submit"]:hover {
+            background-color: #4682b4;
+        }
+
+        hr {
+            margin: 20px 0;
+        }
+
+        #datetime {
+            text-align: center;
+            color: #555;
+            font-size: 0.9em;
+            margin-top: 10px;
+        }
     </style>
-    <style>
-      body {
-          background-color: #faf2e4;
-          margin: 0 15%;
-          font-family: sans-serif;
-      }
+</head>
+<body>
 
-      h1 {
-          text-align: center;
-          font-family: serif;
-          font-weight: normal;
-          text-transform: uppercase;
-          border-bottom: 1px solid #57b1dc;
-          margin-top: 30px;
-      }
+    <h1>Admin Login</h1>
+    <h2>Claims Document Deletion</h2>
 
-      h2 {
-          color: #d1633c;
-          font-size: 1em;
-      }
-
-      input[type="text"],
-      input[type="password"] {
-          padding: 10px;
-          border-radius: 5px;
-          border: 1px solid #ccc;
-          background-color: #f5f5f5;
-      }
-
-      input[type="submit"] {
-          padding: 10px 20px;
-          border-radius: 5px;
-          border: none;
-          background-color: #57b1dc;
-          color: #fff;
-          font-size: 16px;
-          cursor: pointer;
-      }
-
-      input[type="submit"]:hover {
-          background-color: #4682b4;
-      }
-    </style>
-  </head>
-  <body onload="main()">
-    <!-- TODO: add HTML content -->
-    <h3>
-      <center>
-        <form action="Login">
-          <!-- Rest of the code -->
-          <h2>Claims</h2>
-          <h3>This is Admin Login Page</h3>
-          <hr>
-          <br> Enter UserName : <input type="text" name="uname"><br>
-          <br> Enter Password : <input type="password" name="pass"><br>
-          <!--
-          <table class="text-center w-100">
-          <tr>
-              <td colspan="4" class="form-control screen" id="screen"><span id="text"></span> <br> <span id="answer"></span></td>
-          </tr>
-          <tr>
-              <td class="btn key w-25" id="one">1</td>
-              <td class="btn key w-25" id="two">2</td>
-              <td class="btn key w-25" id="three">3</td>
-          </tr>
-          <tr>
-              <td class="btn key w-25" id="four">4</td>
-              <td class="btn key w-25" id="five">5</td>
-              <td class="btn key w-25" id="six">6</td>
-          </tr>
-          <tr>
-              <td class="btn key w-25" id="seven">7</td>
-              <td class="btn key w-25" id="eight">8</td>
-              <td class="btn key w-25" id="nine">9</td>
-          </tr>
-          <tr>
-              <td class="btn key w-25" id="zero">0</td>
-          </tr>
-
-      </table>
-       -->
-          <br> <input type="submit" value="Login">
-          <br>
-          <hr>
-          <h3 id="datetime">Today's Date and Time</h3>
-          <script>
-            function updateDateTime() {
-                var now = new Date();
-                var dateTime = now.toLocaleString();
-                document.getElementById("datetime").textContent = "Today's Date and Time: " + dateTime;
-
-                setTimeout(updateDateTime, 1000);
-            }
-
-            updateDateTime();
-          </script>
+    <div class="login-container">
+        <!-- 
+            Form submits to LoginServlet (mapped to /LoginServlet).
+            Method is POST for security.
+            Input names match your servlet parameters: textName, textpwd.
+        -->
+        <form action="LoginServlet" method="post">
+            <div class="form-group">
+                <label for="textName">Username:</label>
+                <input type="text" id="textName" name="textName" required>
+            </div>
+            <div class="form-group">
+                <label for="textpwd">Password:</label>
+                <input type="password" id="textpwd" name="textpwd" required>
+            </div>
+            <input type="submit" value="Login">
         </form>
-      </center>
-    </h3>
-  </body>
+
+        <hr>
+
+        <div id="datetime">Today's Date and Time</div>
+    </div>
+
+    <!-- JavaScript to update date/time -->
+    <script>
+        function updateDateTime() {
+            var now = new Date();
+            var dateTime = now.toLocaleString();
+            document.getElementById("datetime").textContent = "Today's Date and Time: " + dateTime;
+            setTimeout(updateDateTime, 1000);
+        }
+        updateDateTime();
+    </script>
+
+</body>
 </html>
