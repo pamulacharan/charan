@@ -1,7 +1,9 @@
 <%@ page language="java" contentType="text/html; charset=ISO-8859-1" pageEncoding="ISO-8859-1" %>
 <%@ page import="java.sql.*" %>
 <%
-    // Only process POST requests (login submission)
+    // -----------------------------------------------------------------
+    // 1. Handle POST login submission
+    // -----------------------------------------------------------------
     if ("POST".equalsIgnoreCase(request.getMethod())) {
         String username = request.getParameter("textName");
         String password = request.getParameter("textpwd");
@@ -10,14 +12,14 @@
         if (username != null && !username.trim().isEmpty() &&
             password != null && !password.trim().isEmpty()) {
 
-            // Database credentials – in production, move these to a configuration file
-            String dbUrl = "jdbc:oracle:thin:@SMTRND:1531:SMTRND";
+            // Database credentials – move these to a config file in production!
+            String dbUrl  = "jdbc:oracle:thin:@SMTRND:1531:SMTRND";
             String dbUser = "Linus";
-            String dbPassword = "G4uh3yAW!";
+            String dbPass = "G4uh3yAW!";
 
             String sql = "SELECT * FROM sv_user WHERE USER_ID = ? AND PASSWORD = ?";
 
-            try (Connection conn = DriverManager.getConnection(dbUrl, dbUser, dbPassword);
+            try (Connection conn = DriverManager.getConnection(dbUrl, dbUser, dbPass);
                  PreparedStatement ps = conn.prepareStatement(sql)) {
 
                 ps.setString(1, username);
@@ -25,21 +27,28 @@
 
                 try (ResultSet rs = ps.executeQuery()) {
                     if (rs.next()) {
-                        // Login successful – redirect to success page
-                        response.sendRedirect("Succes.jsp");
+                        // Login success → redirect to success page
+                        response.sendRedirect(request.getContextPath() + "/Succes.jsp");
                         return; // stop further processing
                     }
+                    // else: login failed → will redirect to Error.jsp after try-catch
                 }
             } catch (SQLException e) {
-                // Log the error (you can use a logging framework)
-                System.err.println("Database error during login: " + e.getMessage());
-                // Optionally, you could redirect to an error page with a specific message
+                // Log the error (check your server logs!)
+                System.err.println("Login database error: " + e.getMessage());
+                // Redirect to Error.jsp (or show a custom message)
+                response.sendRedirect(request.getContextPath() + "/Error.jsp");
+                return;
             }
         }
-        // If we reach here, login failed – redirect to error page
-        response.sendRedirect("Error.jsp");
+
+        // If we reach here, login failed (invalid credentials or empty input)
+        response.sendRedirect(request.getContextPath() + "/Error.jsp");
         return;
     }
+    // -----------------------------------------------------------------
+    // 2. Display the login form (for GET requests)
+    // -----------------------------------------------------------------
 %>
 <!DOCTYPE html>
 <html>
@@ -107,7 +116,7 @@
 <body>
     <div>
         <h2>User Login</h2>
-        <form action="login.jsp" method="post">
+        <form action="<%= request.getContextPath() %>/login.jsp" method="post">
             <table>
                 <tr>
                     <td>Username</td>
