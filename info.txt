@@ -1,3 +1,29 @@
+select * from sv_user_U123331;
+
+
+INSERT INTO sv_user_U123331 (user_id,username, password, langguage_id) 
+VALUES ('U123331','charan', 'PamulaCharan@#12345','U123331', 1);
+
+CREATE TABLE sv_user_U123331 (
+    user_id         VARCHAR2(50)  NOT NULL,
+    username        VARCHAR2(50)  NOT NULL,
+    password        VARCHAR2(100) NOT NULL,
+    modified_date   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    modified_user_id VARCHAR2(50)  NOT NULL,
+    langguage_id    NUMBER,
+    inactive        CHAR(1) DEFAULT 'N' CHECK (inactive IN ('Y', 'N'))
+);
+
+
+
+
+
+
+
+
+
+
+
 -- Create table SV_USER_U123331
 CREATE TABLE sv_user_U123331 (
     user_id         NUMBER PRIMARY KEY,
