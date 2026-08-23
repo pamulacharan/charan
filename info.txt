@@ -1,2 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Delete Document</title>
+    <style>
+        body {
+            background-color: #faf2e4;
+            margin: 0 15%;
+            font-family: sans-serif;
+        }
+        h1 {
+            text-align: center;
+            font-family: serif;
+            font-weight: normal;
+            text-transform: uppercase;
+            border-bottom: 1px solid #57b1dc;
+            margin-top: 30px;
+        }
+        .container {
+            max-width: 500px;
+            margin: 40px auto;
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        input[type="number"],
+        input[type="text"] {
+            width: 100%;
+            padding: 10px;
+            border-radius: 5px;
+            border: 1px solid #ccc;
+            box-sizing: border-box;
+        }
+        input[type="submit"] {
+            width: 100%;
+            padding: 12px;
+            border-radius: 5px;
+            border: none;
+            background-color: #57b1dc;
+            color: white;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        input[type="submit"]:hover {
+            background-color: #4682b4;
+        }
+        .message {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 5px;
+            display: none;
+        }
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+    </style>
+</head>
+<body>
 
-exec linus.pkg_claim_document_deletion.process_invoice_deletion(23409461,'INC1925519');  
+    <h1>Document Deletion</h1>
+
+    <div class="container">
+        <form id="deleteForm" action="DeleteDocumentServlet" method="post">
+            <div class="form-group">
+                <label for="docId">Document ID (number)</label>
+                <input type="number" id="docId" name="docId" required placeholder="e.g., 23409461">
+            </div>
+            <div class="form-group">
+                <label for="incidentNo">Incident Number</label>
+                <input type="text" id="incidentNo" name="incidentNo" required placeholder="e.g., INC1925519">
+            </div>
+            <input type="submit" value="Execute" onclick="return confirm('Execute deletion for this document?')">
+        </form>
+
+        <div id="message" class="message"></div>
+    </div>
+
+    <script>
+        // Use XMLHttpRequest for maximum compatibility (Java 1.8 doesn't affect client-side)
+        document.getElementById('deleteForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            var form = this;
+            var formData = new FormData(form);
+            var xhr = new XMLHttpRequest();
+            xhr.open('POST', form.action, true);
+            xhr.onload = function() {
+                var msgDiv = document.getElementById('message');
+                msgDiv.style.display = 'block';
+                if (xhr.responseText.includes('success')) {
+                    msgDiv.className = 'message success';
+                    msgDiv.textContent = '✅ ' + xhr.responseText;
+                } else {
+                    msgDiv.className = 'message error';
+                    msgDiv.textContent = '❌ ' + xhr.responseText;
+                }
+            };
+            xhr.onerror = function() {
+                var msgDiv = document.getElementById('message');
+                msgDiv.style.display = 'block';
+                msgDiv.className = 'message error';
+                msgDiv.textContent = '❌ Network error – please try again.';
+            };
+            xhr.send(formData);
+        });
+    </script>
+</body>
+</html>
