@@ -1,3 +1,72 @@
 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
 
 Loading class `com.mysql.jdbc.Driver'. This is deprecated. The new driver class is `com.mysql.cj.jdbc.Driver'. The driver is automatically registered via the SPI and manual loading of the driver class is generally unnecessary.
+
+
+package com.pamula;
+
+import java.io.IOException;
+import java.sql.DriverManager;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import javax.servlet.ServletException;
+import javax.servlet.annotation.WebServlet;
+import javax.servlet.http.HttpServlet;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+
+/**
+ * Servlet implementation class LoginServlet
+ */
+@WebServlet("/LoginServlet")
+public class LoginServlet extends HttpServlet {
+	private static final long serialVersionUID = 1L;
+       
+//    /**
+//     * @see HttpServlet#HttpServlet()
+//     */
+//    public LoginServlet() {
+//        super();
+//        // TODO Auto-generated constructor stub
+//    }
+//
+//	/**
+//	 * @see HttpServlet#doGet(HttpServletRequest request, HttpServletResponse response)
+//	 */
+//	protected void doGet(HttpServletRequest request, HttpServletResponse response) throws ServletException, IOException {
+//		// TODO Auto-generated method stub
+//		response.getWriter().append("Served at: ").append(request.getContextPath());
+//	}
+//
+//	/**
+//	 * @see HttpServlet#doPost(HttpServletRequest request, HttpServletResponse response)
+//	 */
+	protected void doPost(HttpServletRequest request, HttpServletResponse response) throws ServletException, IOException {
+//		// TODO Auto-generated method stub
+//		doGet(request, response);
+		try {
+			Class.forName("com.mysql.jdbc.Driver");
+			Connection con = DriverManager.getConnection("jdbc:oracle:thin:@SMTRND:1531:SMTRND","Linus","G4uh3yAW!");
+			String name = request.getParameter("textName");
+			String password = request.getParameter("textpwd");
+			PreparedStatement pst = con.prepareStatement("SELECT * FROM SV_USER WHERE USER_ID=? AND PASSWORD=?");
+			/***
+			 charan	Charan@1998
+			 pamula	Charan@1998
+			 */
+			pst.setString(1, name);
+			pst.setString(2, password);
+			ResultSet rs = pst.executeQuery();
+			if (rs.next()) {
+				response.sendRedirect("Succes.jsp");
+			} else {
+				response.sendRedirect("Error.jsp");
+			}
+			
+		} catch (Exception e) {
+			// TODO: handle exception
+		}
+	}
+
+}
