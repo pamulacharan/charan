@@ -1,3 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Delete Document</title>
+    <style>
+        body {
+            background-color: #faf2e4;
+            margin: 0 15%;
+            font-family: sans-serif;
+        }
+        h1 {
+            text-align: center;
+            border-bottom: 1px solid #57b1dc;
+            margin-top: 30px;
+        }
+        .container {
+            max-width: 500px;
+            margin: 40px auto;
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        input[type="number"], input[type="text"] {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            box-sizing: border-box;
+        }
+        input[type="submit"] {
+            width: 100%;
+            padding: 12px;
+            background: #57b1dc;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        input[type="submit"]:hover {
+            background: #4682b4;
+        }
+        .message {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 5px;
+            display: none;
+        }
+        .success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+    </style>
+</head>
+<body>
+    <h1>Document Deletion</h1>
+    <div class="container">
+        <form id="deleteForm" action="<%= request.getContextPath() %>/DeleteServlet" method="post">
+            <div class="form-group">
+                <label>Document ID</label>
+                <input type="number" name="docId" required placeholder="e.g., 20035562">
+            </div>
+            <div class="form-group">
+                <label>Incident Number</label>
+                <input type="text" name="incidentNo" required placeholder="e.g., INCIDENT_NUMBER">
+            </div>
+            <input type="submit" value="Execute">
+        </form>
+        <div id="message" class="message"></div>
+    </div>
+
+    <script>
+        document.getElementById('deleteForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            var form = this;
+            var data = new FormData(form);
+            var xhr = new XMLHttpRequest();
+            xhr.open('POST', form.action, true);
+            xhr.onload = function() {
+                var msg = document.getElementById('message');
+                msg.style.display = 'block';
+                if (xhr.responseText.indexOf('success') !== -1) {
+                    msg.className = 'message success';
+                } else {
+                    msg.className = 'message error';
+                }
+                msg.textContent = xhr.responseText;
+            };
+            xhr.onerror = function() {
+                var msg = document.getElementById('message');
+                msg.style.display = 'block';
+                msg.className = 'message error';
+                msg.textContent = 'Network error – check console.';
+            };
+            xhr.send(data);
+        });
+    </script>
+</body>
+</html>
+
+
+
+
 package org.example;
 
 import javax.servlet.ServletException;
@@ -19,9 +138,12 @@ public class DeleteServlet extends HttpServlet {
     private static final long serialVersionUID = 1L;
     private static final Logger LOGGER = Logger.getLogger(DeleteServlet.class.getName());
 
+    // Same credentials as your LoginServlet
     private static final String DB_URL = "jdbc:oracle:thin:@//SMTRND:1531/SMTRND";
     private static final String DB_USER = "Linus";
     private static final String DB_PASSWORD = "G4uh3yAW!";
+
+    // Stored procedure call
     private static final String SQL_CALL =
             "{ call linus.pkg_claim_document_deletion.process_invoice_deletion(?, ?) }";
 
@@ -49,9 +171,11 @@ public class DeleteServlet extends HttpServlet {
         String docIdStr = request.getParameter("docId");
         String incidentNo = request.getParameter("incidentNo");
 
+        // Validate input
         if (docIdStr == null || docIdStr.trim().isEmpty() ||
             incidentNo == null || incidentNo.trim().isEmpty()) {
-            out.print("Error: Both parameters are required.");
+            LOGGER.warning("Missing parameters");
+            out.print("Error: Both Document ID and Incident Number are required.");
             return;
         }
 
@@ -59,10 +183,12 @@ public class DeleteServlet extends HttpServlet {
         try {
             docId = Long.parseLong(docIdStr.trim());
         } catch (NumberFormatException e) {
-            out.print("Error: Document ID must be a number.");
+            LOGGER.warning("Invalid docId: " + docIdStr);
+            out.print("Error: Document ID must be a valid number.");
             return;
         }
 
+        // Execute the procedure
         try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
              CallableStatement cstmt = conn.prepareCall(SQL_CALL)) {
 
@@ -70,8 +196,8 @@ public class DeleteServlet extends HttpServlet {
             cstmt.setString(2, incidentNo);
             cstmt.execute();
 
-            out.print("success: Document " + docId + " deleted (incident: " + incidentNo + ")");
-            LOGGER.info("Deletion succeeded.");
+            out.print("success: Document " + docId + " deleted successfully (incident: " + incidentNo + ")");
+            LOGGER.info("Deletion succeeded for docId=" + docId + ", incident=" + incidentNo);
 
         } catch (SQLException e) {
             LOGGER.log(Level.SEVERE, "Deletion failed", e);
