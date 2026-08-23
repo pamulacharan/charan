@@ -1,36 +1,4 @@
-//DBConnection.java
-package com.pamula.util;
-
-import java.io.IOException;
-import java.io.InputStream;
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.SQLException;
-import java.util.Properties;
-
-public class DBConnection {
-
-    private static final Properties props = new Properties();
-
-    static {
-        try (InputStream input = DBConnection.class.getClassLoader()
-                .getResourceAsStream("db.properties")) {
-            if (input == null) {
-                throw new RuntimeException("db.properties not found in classpath");
-            }
-            props.load(input);
-            // Optional: manually load Oracle driver (not required for JDBC 4+)
-            // Class.forName("oracle.jdbc.driver.OracleDriver");
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to load database properties", e);
-        }
-    }
-
-    public static Connection getConnection() throws SQLException {
-        return DriverManager.getConnection(
-                props.getProperty("db.url"),
-                props.getProperty("db.username"),
-                props.getProperty("db.password")
-        );
-    }
-}
+# Database configuration
+db.url=jdbc:oracle:thin:@//SMTRND:1531/SMTRND
+db.username=Linus
+db.password=G4uh3yAW!
