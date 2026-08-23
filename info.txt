@@ -1,3 +1,28 @@
+-- Create table SV_USER_U123331
+CREATE TABLE sv_user_U123331 (
+    user_id         NUMBER PRIMARY KEY,
+    username        VARCHAR2(50)  NOT NULL,
+    password        VARCHAR2(100) NOT NULL,
+    modified_date   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    modified_user_id NUMBER,
+    langguage_id    NUMBER,
+    inactive        CHAR(1) DEFAULT 'N' CHECK (inactive IN ('Y', 'N'))
+);
+
+-- Optional: create a sequence for auto-incrementing user_id
+CREATE SEQUENCE sv_user_U123331_seq START WITH 1 INCREMENT BY 1;
+
+-- Optional: trigger to auto-populate user_id
+CREATE OR REPLACE TRIGGER sv_user_U123331_trg
+BEFORE INSERT ON sv_user_U123331
+FOR EACH ROW
+WHEN (NEW.user_id IS NULL)
+BEGIN
+    SELECT sv_user_U123331_seq.NEXTVAL INTO :NEW.user_id FROM DUAL;
+END;
+/
+
+
 I’ll build a complete system where:
 
 - **Users** submit document IDs and incident numbers – these are stored in a `DELETION_REQUESTS` table.
