@@ -1,29 +1,82 @@
-23-Aug-2026 22:26:58.078 SEVERE [http-nio-8080-exec-5] com.pamula.LoginServlet.doPost Database error during login for user: U123331
-	java.sql.SQLException: No suitable driver found for jdbc:oracle:thin:@//SMTRND:1531/SMTRND
-		at java.sql.DriverManager.getConnection(DriverManager.java:689)
-		at java.sql.DriverManager.getConnection(DriverManager.java:247)
-		at com.pamula.LoginServlet.doPost(LoginServlet.java:55)
-		at javax.servlet.http.HttpServlet.service(HttpServlet.java:555)
-		at javax.servlet.http.HttpServlet.service(HttpServlet.java:623)
-		at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:197)
-		at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:142)
-		at org.apache.tomcat.websocket.server.WsFilter.doFilter(WsFilter.java:51)
-		at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:166)
-		at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:142)
-		at org.apache.catalina.core.StandardWrapperValve.invoke(StandardWrapperValve.java:166)
-		at org.apache.catalina.core.StandardContextValve.invoke(StandardContextValve.java:88)
-		at org.apache.catalina.authenticator.AuthenticatorBase.invoke(AuthenticatorBase.java:481)
-		at org.apache.catalina.core.StandardHostValve.invoke(StandardHostValve.java:127)
-		at org.apache.catalina.valves.ErrorReportValve.invoke(ErrorReportValve.java:83)
-		at org.apache.catalina.valves.AbstractAccessLogValve.invoke(AbstractAccessLogValve.java:643)
-		at org.apache.catalina.core.StandardEngineValve.invoke(StandardEngineValve.java:72)
-		at org.apache.catalina.connector.CoyoteAdapter.service(CoyoteAdapter.java:344)
-		at org.apache.coyote.http11.Http11Processor.service(Http11Processor.java:398)
-		at org.apache.coyote.AbstractProcessorLight.process(AbstractProcessorLight.java:63)
-		at org.apache.coyote.AbstractProtocol$ConnectionHandler.process(AbstractProtocol.java:935)
-		at org.apache.tomcat.util.net.NioEndpoint$SocketProcessor.doRun(NioEndpoint.java:1831)
-		at org.apache.tomcat.util.net.SocketProcessorBase.run(SocketProcessorBase.java:52)
-		at org.apache.tomcat.util.threads.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:973)
-		at org.apache.tomcat.util.threads.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:491)
-		at org.apache.tomcat.util.threads.TaskThread$WrappingRunnable.run(TaskThread.java:63)
-		at java.lang.Thread.run(Thread.java:750)
+package com.pamula;
+
+import java.io.IOException;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
+import javax.servlet.ServletException;
+import javax.servlet.annotation.WebServlet;
+import javax.servlet.http.HttpServlet;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+
+@WebServlet("/LoginServlet")
+public class LoginServlet extends HttpServlet {
+    private static final long serialVersionUID = 1L;
+
+    private static final Logger LOGGER = Logger.getLogger(LoginServlet.class.getName());
+
+    // Database credentials (hardcoded for simplicity – NOT for production)
+    private static final String DB_URL = "jdbc:oracle:thin:@//SMTRND:1531/SMTRND";
+    private static final String DB_USER = "Linus";
+    private static final String DB_PASSWORD = "G4uh3yAW!";
+    private static final String SQL_SELECT = "SELECT * FROM SV_USER WHERE USER_ID = ? AND PASSWORD = ?";
+
+    // Explicitly load the Oracle driver to catch missing JAR early
+    static {
+        try {
+            Class.forName("oracle.jdbc.driver.OracleDriver");
+        } catch (ClassNotFoundException e) {
+            throw new RuntimeException("Oracle JDBC driver not found. " +
+                "Please place ojdbc8.jar in WEB-INF/lib.", e);
+        }
+    }
+
+    @Override
+    protected void doGet(HttpServletRequest request, HttpServletResponse response)
+            throws ServletException, IOException {
+        doPost(request, response);
+    }
+
+    @Override
+    protected void doPost(HttpServletRequest request, HttpServletResponse response)
+            throws ServletException, IOException {
+
+        String username = request.getParameter("textName");
+        String password = request.getParameter("textpwd");
+
+        // Input validation
+        if (username == null || username.trim().isEmpty() ||
+            password == null || password.trim().isEmpty()) {
+            LOGGER.warning("Login attempt with empty credentials");
+            response.sendRedirect(request.getContextPath() + "/Error.jsp");
+            return;
+        }
+
+        try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
+             PreparedStatement pst = conn.prepareStatement(SQL_SELECT)) {
+
+            pst.setString(1, username);
+            pst.setString(2, password);
+
+            try (ResultSet rs = pst.executeQuery()) {
+                if (rs.next()) {
+                    LOGGER.info("User logged in successfully: " + username);
+                    response.sendRedirect(request.getContextPath() + "/Succes.jsp");
+                } else {
+                    LOGGER.info("Failed login attempt for user: " + username);
+                    response.sendRedirect(request.getContextPath() + "/Error.jsp");
+                }
+            }
+
+        } catch (SQLException e) {
+            LOGGER.log(Level.SEVERE, "Database error during login for user: " + username, e);
+            response.sendRedirect(request.getContextPath() + "/Error.jsp");
+        }
+    }
+}
