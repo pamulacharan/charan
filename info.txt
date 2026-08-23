@@ -1,4 +1,28 @@
-# Database configuration
-db.url=jdbc:oracle:thin:@//SMTRND:1531/SMTRND
-db.username=Linus
-db.password=G4uh3yAW!
+HTTP Status 500 – Internal Server Error
+Type Exception Report
+
+Message Servlet execution threw an exception
+
+Description The server encountered an unexpected condition that prevented it from fulfilling the request.
+
+Exception
+
+javax.servlet.ServletException: Servlet execution threw an exception
+	org.apache.tomcat.websocket.server.WsFilter.doFilter(WsFilter.java:51)
+Root Cause
+
+java.lang.ExceptionInInitializerError
+	com.pamula.LoginServlet.doPost(LoginServlet.java:51)
+	javax.servlet.http.HttpServlet.service(HttpServlet.java:555)
+	javax.servlet.http.HttpServlet.service(HttpServlet.java:623)
+	org.apache.tomcat.websocket.server.WsFilter.doFilter(WsFilter.java:51)
+Root Cause
+
+java.lang.RuntimeException: db.properties not found in classpath
+	com.pamula.DBConnection.<clinit>(DBConnection.java:19)
+	com.pamula.LoginServlet.doPost(LoginServlet.java:51)
+	javax.servlet.http.HttpServlet.service(HttpServlet.java:555)
+	javax.servlet.http.HttpServlet.service(HttpServlet.java:623)
+	org.apache.tomcat.websocket.server.WsFilter.doFilter(WsFilter.java:51)
+Note The full stack trace of the root cause is available in the server logs.
+
