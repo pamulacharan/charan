@@ -1,82 +1,124 @@
-package com.pamula;
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Main page</title>
+    <meta http-equiv="Content-Type" content="text/html;charset=utf-8">
+    <script type="text/javascript" charset="utf-8" src="teavm/classes.js"></script>
+    <meta charset="ISO-8859-1">
+    <link rel='stylesheet' type="text/css" href='bootstrap.min.css'>
+    <link rel='stylesheet' type="text/css" href='calculator.css'>
+    <title>Admin Login Page</title>
+    <style>
+      p {
+          color: red;
+      }
 
-import java.io.IOException;
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+      p {
+          color: blue;
+      }
 
-import javax.servlet.ServletException;
-import javax.servlet.annotation.WebServlet;
-import javax.servlet.http.HttpServlet;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
+      p {
+          color: green;
+      }
+    </style>
+    <style>
+      body {
+          background-color: #faf2e4;
+          margin: 0 15%;
+          font-family: sans-serif;
+      }
 
-@WebServlet("/LoginServlet")
-public class LoginServlet extends HttpServlet {
-    private static final long serialVersionUID = 1L;
+      h1 {
+          text-align: center;
+          font-family: serif;
+          font-weight: normal;
+          text-transform: uppercase;
+          border-bottom: 1px solid #57b1dc;
+          margin-top: 30px;
+      }
 
-    private static final Logger LOGGER = Logger.getLogger(LoginServlet.class.getName());
+      h2 {
+          color: #d1633c;
+          font-size: 1em;
+      }
 
-    // Database credentials (hardcoded for simplicity – NOT for production)
-    private static final String DB_URL = "jdbc:oracle:thin:@//SMTRND:1531/SMTRND";
-    private static final String DB_USER = "Linus";
-    private static final String DB_PASSWORD = "G4uh3yAW!";
-    private static final String SQL_SELECT = "SELECT * FROM SV_USER WHERE USER_ID = ? AND PASSWORD = ?";
+      input[type="text"],
+      input[type="password"] {
+          padding: 10px;
+          border-radius: 5px;
+          border: 1px solid #ccc;
+          background-color: #f5f5f5;
+      }
 
-    // Explicitly load the Oracle driver to catch missing JAR early
-    static {
-        try {
-            Class.forName("oracle.jdbc.driver.OracleDriver");
-        } catch (ClassNotFoundException e) {
-            throw new RuntimeException("Oracle JDBC driver not found. " +
-                "Please place ojdbc8.jar in WEB-INF/lib.", e);
-        }
-    }
+      input[type="submit"] {
+          padding: 10px 20px;
+          border-radius: 5px;
+          border: none;
+          background-color: #57b1dc;
+          color: #fff;
+          font-size: 16px;
+          cursor: pointer;
+      }
 
-    @Override
-    protected void doGet(HttpServletRequest request, HttpServletResponse response)
-            throws ServletException, IOException {
-        doPost(request, response);
-    }
+      input[type="submit"]:hover {
+          background-color: #4682b4;
+      }
+    </style>
+  </head>
+  <body onload="main()">
+    <!-- TODO: add HTML content -->
+    <h3>
+      <center>
+        <form action="Login">
+          <!-- Rest of the code -->
+          <h2>Claims</h2>
+          <h3>This is Admin Login Page</h3>
+          <hr>
+          <br> Enter UserName : <input type="text" name="uname"><br>
+          <br> Enter Password : <input type="password" name="pass"><br>
+          <!--
+          <table class="text-center w-100">
+          <tr>
+              <td colspan="4" class="form-control screen" id="screen"><span id="text"></span> <br> <span id="answer"></span></td>
+          </tr>
+          <tr>
+              <td class="btn key w-25" id="one">1</td>
+              <td class="btn key w-25" id="two">2</td>
+              <td class="btn key w-25" id="three">3</td>
+          </tr>
+          <tr>
+              <td class="btn key w-25" id="four">4</td>
+              <td class="btn key w-25" id="five">5</td>
+              <td class="btn key w-25" id="six">6</td>
+          </tr>
+          <tr>
+              <td class="btn key w-25" id="seven">7</td>
+              <td class="btn key w-25" id="eight">8</td>
+              <td class="btn key w-25" id="nine">9</td>
+          </tr>
+          <tr>
+              <td class="btn key w-25" id="zero">0</td>
+          </tr>
 
-    @Override
-    protected void doPost(HttpServletRequest request, HttpServletResponse response)
-            throws ServletException, IOException {
+      </table>
+       -->
+          <br> <input type="submit" value="Login">
+          <br>
+          <hr>
+          <h3 id="datetime">Today's Date and Time</h3>
+          <script>
+            function updateDateTime() {
+                var now = new Date();
+                var dateTime = now.toLocaleString();
+                document.getElementById("datetime").textContent = "Today's Date and Time: " + dateTime;
 
-        String username = request.getParameter("textName");
-        String password = request.getParameter("textpwd");
-
-        // Input validation
-        if (username == null || username.trim().isEmpty() ||
-            password == null || password.trim().isEmpty()) {
-            LOGGER.warning("Login attempt with empty credentials");
-            response.sendRedirect(request.getContextPath() + "/Error.jsp");
-            return;
-        }
-
-        try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
-             PreparedStatement pst = conn.prepareStatement(SQL_SELECT)) {
-
-            pst.setString(1, username);
-            pst.setString(2, password);
-
-            try (ResultSet rs = pst.executeQuery()) {
-                if (rs.next()) {
-                    LOGGER.info("User logged in successfully: " + username);
-                    response.sendRedirect(request.getContextPath() + "/Succes.jsp");
-                } else {
-                    LOGGER.info("Failed login attempt for user: " + username);
-                    response.sendRedirect(request.getContextPath() + "/Error.jsp");
-                }
+                setTimeout(updateDateTime, 1000);
             }
 
-        } catch (SQLException e) {
-            LOGGER.log(Level.SEVERE, "Database error during login for user: " + username, e);
-            response.sendRedirect(request.getContextPath() + "/Error.jsp");
-        }
-    }
-}
+            updateDateTime();
+          </script>
+        </form>
+      </center>
+    </h3>
+  </body>
+</html>
