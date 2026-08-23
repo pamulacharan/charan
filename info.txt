@@ -9,6 +9,9 @@ CREATE TABLE sv_user_U123331 (
     inactive        CHAR(1) DEFAULT 'N' CHECK (inactive IN ('Y', 'N'))
 );
 
+INSERT INTO sv_user_U123331 (username, password, langguage_id) 
+VALUES ('john_doe', 'hashed_password', 1);
+
 -- Optional: create a sequence for auto-incrementing user_id
 CREATE SEQUENCE sv_user_U123331_seq START WITH 1 INCREMENT BY 1;
 
