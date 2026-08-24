@@ -1,0 +1,601 @@
+I'll provide a complete system where:
+
+- Users log in using the `sv_user_U123331` table.
+- They submit a document ID and incident number – **only if** the document ID exists in `sv_invoice_header` will the request be inserted into `deletion_requests`.
+- Any logged‑in user can then see all pending requests and execute the deletion (by calling the stored procedure) – no admin role needed (as you requested "can delete any one from the sv_user_U123331").
+
+All code is **Java 1.8 compatible**, uses JSP + Servlet, and the same Oracle database.
+
+---
+
+## 📦 1. Database Setup (run once)
+
+```sql
+-- Create the user table (you already have it, but I'll include for completeness)
+CREATE TABLE sv_user_U123331 (
+    user_id          VARCHAR2(50)   NOT NULL,
+    username         VARCHAR2(50)   NOT NULL,
+    password         VARCHAR2(100)  NOT NULL,
+    modified_date    TIMESTAMP      DEFAULT CURRENT_TIMESTAMP,
+    modified_user_id VARCHAR2(50)   NOT NULL,
+    langguage_id     NUMBER,
+    inactive         CHAR(1)        DEFAULT 'N' CHECK (inactive IN ('Y', 'N'))
+);
+
+-- Add primary key
+ALTER TABLE sv_user_U123331 ADD CONSTRAINT pk_user_id PRIMARY KEY (user_id);
+
+-- Insert a test user (password: PamulaCharan@#12345)
+INSERT INTO sv_user_U123331 (user_id, username, password, modified_user_id, langguage_id)
+VALUES ('U123331', 'charan', 'PamulaCharan@#12345', 'U123331', 1);
+COMMIT;
+
+-- Request table (already defined)
+CREATE TABLE deletion_requests (
+    request_id      NUMBER PRIMARY KEY,
+    doc_id          NUMBER NOT NULL,
+    incident_no     VARCHAR2(100) NOT NULL,
+    submitted_by    VARCHAR2(50) NOT NULL,
+    submitted_date  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    status          VARCHAR2(20) DEFAULT 'PENDING',
+    processed_by    VARCHAR2(50),
+    processed_date  TIMESTAMP
+);
+
+-- Sequence for request_id
+CREATE SEQUENCE deletion_requests_seq START WITH 1 INCREMENT BY 1;
+```
+
+---
+
+## 🔐 2. Login Servlet (using `sv_user_U123331`)
+
+```java
+package org.example;
+
+import javax.servlet.ServletException;
+import javax.servlet.annotation.WebServlet;
+import javax.servlet.http.HttpServlet;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import javax.servlet.http.HttpSession;
+import java.io.IOException;
+import java.sql.*;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
+@WebServlet("/LoginServlet")
+public class LoginServlet extends HttpServlet {
+    private static final long serialVersionUID = 1L;
+    private static final Logger LOGGER = Logger.getLogger(LoginServlet.class.getName());
+
+    private static final String DB_URL = "jdbc:oracle:thin:@//SMTRND:1531/SMTRND";
+    private static final String DB_USER = "Linus";
+    private static final String DB_PASSWORD = "G4uh3yAW!";
+
+    static {
+        try {
+            Class.forName("oracle.jdbc.driver.OracleDriver");
+        } catch (ClassNotFoundException e) {
+            throw new RuntimeException("Oracle driver missing.", e);
+        }
+    }
+
+    @Override
+    protected void doPost(HttpServletRequest request, HttpServletResponse response)
+            throws ServletException, IOException {
+
+        String username = request.getParameter("textName");
+        String password = request.getParameter("textpwd");
+
+        if (username == null || username.trim().isEmpty() ||
+            password == null || password.trim().isEmpty()) {
+            response.sendRedirect("Error.jsp");
+            return;
+        }
+
+        String sql = "SELECT user_id FROM sv_user_U123331 WHERE username = ? AND password = ? AND inactive = 'N'";
+
+        try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
+             PreparedStatement pst = conn.prepareStatement(sql)) {
+
+            pst.setString(1, username);
+            pst.setString(2, password);
+
+            try (ResultSet rs = pst.executeQuery()) {
+                if (rs.next()) {
+                    String userId = rs.getString("user_id");
+                    HttpSession session = request.getSession();
+                    session.setAttribute("userId", userId);
+                    session.setAttribute("username", username);
+                    response.sendRedirect("userDashboard.jsp");
+                } else {
+                    response.sendRedirect("Error.jsp");
+                }
+            }
+        } catch (SQLException e) {
+            LOGGER.log(Level.SEVERE, "Login error", e);
+            response.sendRedirect("Error.jsp");
+        }
+    }
+}
+```
+
+---
+
+## 🧑‍💻 3. User Dashboard JSP (`userDashboard.jsp`)
+
+Shows:
+- A form to submit a new deletion request.
+- A table of all pending requests (with an **Execute** button for each).
+- A table of history.
+
+```jsp
+<%@ page language="java" contentType="text/html; charset=UTF-8" pageEncoding="UTF-8" %>
+<%@ page import="java.sql.*, java.util.*" %>
+<%
+    String userId = (String) session.getAttribute("userId");
+    String username = (String) session.getAttribute("username");
+    if (userId == null) {
+        response.sendRedirect("login.jsp");
+        return;
+    }
+
+    String dbUrl = "jdbc:oracle:thin:@//SMTRND:1531/SMTRND";
+    String dbUser = "Linus";
+    String dbPass = "G4uh3yAW!";
+%>
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>User Dashboard</title>
+    <style>
+        body { background: #faf2e4; margin: 0 15%; font-family: sans-serif; }
+        h1 { text-align: center; border-bottom: 1px solid #57b1dc; }
+        .container { max-width: 900px; margin: 20px auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+        th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
+        th { background: #57b1dc; color: white; }
+        .form-group { margin-bottom: 15px; }
+        label { display: inline-block; width: 120px; }
+        input[type="number"], input[type="text"] { padding: 8px; width: 200px; border: 1px solid #ccc; border-radius: 4px; }
+        input[type="submit"] { padding: 8px 20px; background: #57b1dc; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        .btn-delete { background: #dc3545; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; }
+        .btn-delete:hover { background: #c82333; }
+        .message { padding: 10px; margin: 10px 0; border-radius: 4px; }
+        .success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .logout { float: right; }
+    </style>
+</head>
+<body>
+    <h1>Welcome, <%= username %> <span class="logout"><a href="LogoutServlet">Logout</a></span></h1>
+
+    <div class="container">
+        <%
+            String msg = (String) request.getAttribute("message");
+            String type = (String) request.getAttribute("type");
+            if (msg != null) {
+        %>
+            <div class="message <%= type %>"><%= msg %></div>
+        <%
+            }
+        %>
+
+        <h2>Submit a Deletion Request</h2>
+        <form action="SubmitRequestServlet" method="post">
+            <div class="form-group">
+                <label>Document ID:</label>
+                <input type="number" name="docId" required>
+            </div>
+            <div class="form-group">
+                <label>Incident Number:</label>
+                <input type="text" name="incidentNo" required>
+            </div>
+            <input type="submit" value="Submit">
+        </form>
+
+        <hr>
+
+        <h2>Pending Requests</h2>
+        <table>
+            <tr>
+                <th>Request ID</th>
+                <th>Document ID</th>
+                <th>Incident No</th>
+                <th>Submitted By</th>
+                <th>Submitted Date</th>
+                <th>Action</th>
+            </tr>
+            <%
+                String pendingSql = "SELECT request_id, doc_id, incident_no, submitted_by, submitted_date " +
+                                    "FROM deletion_requests WHERE status = 'PENDING' ORDER BY request_id";
+                try (Connection conn = DriverManager.getConnection(dbUrl, dbUser, dbPass);
+                     Statement stmt = conn.createStatement();
+                     ResultSet rs = stmt.executeQuery(pendingSql)) {
+                    if (!rs.isBeforeFirst()) {
+                        out.println("<tr><td colspan='6'>No pending requests.</td></tr>");
+                    } else {
+                        while (rs.next()) {
+                            out.println("<tr>");
+                            out.println("<td>" + rs.getInt("request_id") + "</td>");
+                            out.println("<td>" + rs.getInt("doc_id") + "</td>");
+                            out.println("<td>" + rs.getString("incident_no") + "</td>");
+                            out.println("<td>" + rs.getString("submitted_by") + "</td>");
+                            out.println("<td>" + rs.getTimestamp("submitted_date") + "</td>");
+                            out.println("<td>");
+                            out.println("<form action='ProcessDeletionServlet' method='post'>");
+                            out.println("<input type='hidden' name='requestId' value='" + rs.getInt("request_id") + "'>");
+                            out.println("<button type='submit' class='btn-delete' onclick='return confirm(\"Execute deletion for this request?\")'>Delete</button>");
+                            out.println("</form>");
+                            out.println("</td>");
+                            out.println("</tr>");
+                        }
+                    }
+                } catch (SQLException e) {
+                    out.println("<tr><td colspan='6'>Error: " + e.getMessage() + "</td></tr>");
+                }
+            %>
+        </table>
+
+        <hr>
+
+        <h2>History</h2>
+        <table>
+            <tr>
+                <th>Request ID</th>
+                <th>Document ID</th>
+                <th>Incident No</th>
+                <th>Status</th>
+                <th>Processed By</th>
+                <th>Processed Date</th>
+            </tr>
+            <%
+                String historySql = "SELECT request_id, doc_id, incident_no, status, processed_by, processed_date " +
+                                    "FROM deletion_requests WHERE status != 'PENDING' ORDER BY request_id DESC";
+                try (Connection conn = DriverManager.getConnection(dbUrl, dbUser, dbPass);
+                     Statement stmt = conn.createStatement();
+                     ResultSet rs = stmt.executeQuery(historySql)) {
+                    if (!rs.isBeforeFirst()) {
+                        out.println("<tr><td colspan='6'>No history.</td></tr>");
+                    } else {
+                        while (rs.next()) {
+                            out.println("<tr>");
+                            out.println("<td>" + rs.getInt("request_id") + "</td>");
+                            out.println("<td>" + rs.getInt("doc_id") + "</td>");
+                            out.println("<td>" + rs.getString("incident_no") + "</td>");
+                            out.println("<td>" + rs.getString("status") + "</td>");
+                            out.println("<td>" + (rs.getString("processed_by") != null ? rs.getString("processed_by") : "-") + "</td>");
+                            out.println("<td>" + (rs.getTimestamp("processed_date") != null ? rs.getTimestamp("processed_date") : "-") + "</td>");
+                            out.println("</tr>");
+                        }
+                    }
+                } catch (SQLException e) {
+                    out.println("<tr><td colspan='6'>Error: " + e.getMessage() + "</td></tr>");
+                }
+            %>
+        </table>
+    </div>
+</body>
+</html>
+```
+
+---
+
+## 📤 4. Submit Request Servlet (checks doc_id existence)
+
+```java
+package org.example;
+
+import javax.servlet.ServletException;
+import javax.servlet.annotation.WebServlet;
+import javax.servlet.http.HttpServlet;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import javax.servlet.http.HttpSession;
+import java.io.IOException;
+import java.sql.*;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
+@WebServlet("/SubmitRequestServlet")
+public class SubmitRequestServlet extends HttpServlet {
+    private static final long serialVersionUID = 1L;
+    private static final Logger LOGGER = Logger.getLogger(SubmitRequestServlet.class.getName());
+
+    private static final String DB_URL = "jdbc:oracle:thin:@//SMTRND:1531/SMTRND";
+    private static final String DB_USER = "Linus";
+    private static final String DB_PASSWORD = "G4uh3yAW!";
+
+    @Override
+    protected void doPost(HttpServletRequest request, HttpServletResponse response)
+            throws ServletException, IOException {
+
+        HttpSession session = request.getSession();
+        String userId = (String) session.getAttribute("userId");
+        if (userId == null) {
+            response.sendRedirect("login.jsp");
+            return;
+        }
+
+        String docIdStr = request.getParameter("docId");
+        String incidentNo = request.getParameter("incidentNo");
+
+        if (docIdStr == null || docIdStr.trim().isEmpty() ||
+            incidentNo == null || incidentNo.trim().isEmpty()) {
+            request.setAttribute("message", "Both fields are required.");
+            request.setAttribute("type", "error");
+            request.getRequestDispatcher("userDashboard.jsp").forward(request, response);
+            return;
+        }
+
+        long docId;
+        try {
+            docId = Long.parseLong(docIdStr.trim());
+        } catch (NumberFormatException e) {
+            request.setAttribute("message", "Document ID must be a number.");
+            request.setAttribute("type", "error");
+            request.getRequestDispatcher("userDashboard.jsp").forward(request, response);
+            return;
+        }
+
+        // Check if doc_id exists in sv_invoice_header
+        String checkSql = "SELECT COUNT(*) FROM sv_invoice_header WHERE doc_id = ?"; // adjust column name if needed
+
+        try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
+             PreparedStatement checkStmt = conn.prepareStatement(checkSql)) {
+
+            checkStmt.setLong(1, docId);
+            try (ResultSet rs = checkStmt.executeQuery()) {
+                if (rs.next() && rs.getInt(1) == 0) {
+                    request.setAttribute("message", "Document ID " + docId + " does not exist in invoice header.");
+                    request.setAttribute("type", "error");
+                    request.getRequestDispatcher("userDashboard.jsp").forward(request, response);
+                    return;
+                }
+            }
+        } catch (SQLException e) {
+            LOGGER.log(Level.SEVERE, "Check existence error", e);
+            request.setAttribute("message", "Database error while checking document.");
+            request.setAttribute("type", "error");
+            request.getRequestDispatcher("userDashboard.jsp").forward(request, response);
+            return;
+        }
+
+        // Insert into deletion_requests
+        String insertSql = "INSERT INTO deletion_requests (request_id, doc_id, incident_no, submitted_by) " +
+                           "VALUES (deletion_requests_seq.NEXTVAL, ?, ?, ?)";
+
+        try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
+             PreparedStatement pst = conn.prepareStatement(insertSql)) {
+
+            pst.setLong(1, docId);
+            pst.setString(2, incidentNo);
+            pst.setString(3, userId);
+
+            int rows = pst.executeUpdate();
+            if (rows > 0) {
+                request.setAttribute("message", "Request submitted successfully!");
+                request.setAttribute("type", "success");
+            } else {
+                request.setAttribute("message", "Submission failed.");
+                request.setAttribute("type", "error");
+            }
+        } catch (SQLException e) {
+            LOGGER.log(Level.SEVERE, "Insert error", e);
+            request.setAttribute("message", "Database error: " + e.getMessage());
+            request.setAttribute("type", "error");
+        }
+
+        request.getRequestDispatcher("userDashboard.jsp").forward(request, response);
+    }
+}
+```
+
+---
+
+## 🗑️ 5. Process Deletion Servlet (executes the stored procedure)
+
+```java
+package org.example;
+
+import javax.servlet.ServletException;
+import javax.servlet.annotation.WebServlet;
+import javax.servlet.http.HttpServlet;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import javax.servlet.http.HttpSession;
+import java.io.IOException;
+import java.sql.*;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
+@WebServlet("/ProcessDeletionServlet")
+public class ProcessDeletionServlet extends HttpServlet {
+    private static final long serialVersionUID = 1L;
+    private static final Logger LOGGER = Logger.getLogger(ProcessDeletionServlet.class.getName());
+
+    private static final String DB_URL = "jdbc:oracle:thin:@//SMTRND:1531/SMTRND";
+    private static final String DB_USER = "Linus";
+    private static final String DB_PASSWORD = "G4uh3yAW!";
+    private static final String PROC_CALL = "{ call linus.pkg_claim_document_deletion.process_invoice_deletion(?, ?) }";
+
+    @Override
+    protected void doPost(HttpServletRequest request, HttpServletResponse response)
+            throws ServletException, IOException {
+
+        HttpSession session = request.getSession();
+        String userId = (String) session.getAttribute("userId");
+        if (userId == null) {
+            response.sendRedirect("login.jsp");
+            return;
+        }
+
+        String requestIdStr = request.getParameter("requestId");
+        if (requestIdStr == null || requestIdStr.trim().isEmpty()) {
+            request.setAttribute("message", "Missing request ID.");
+            request.setAttribute("type", "error");
+            request.getRequestDispatcher("userDashboard.jsp").forward(request, response);
+            return;
+        }
+
+        int requestId;
+        try {
+            requestId = Integer.parseInt(requestIdStr.trim());
+        } catch (NumberFormatException e) {
+            request.setAttribute("message", "Invalid request ID.");
+            request.setAttribute("type", "error");
+            request.getRequestDispatcher("userDashboard.jsp").forward(request, response);
+            return;
+        }
+
+        // Fetch doc_id and incident_no from the request
+        String selectSql = "SELECT doc_id, incident_no FROM deletion_requests WHERE request_id = ? AND status = 'PENDING'";
+        long docId = 0;
+        String incidentNo = null;
+
+        try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
+             PreparedStatement pst = conn.prepareStatement(selectSql)) {
+            pst.setInt(1, requestId);
+            try (ResultSet rs = pst.executeQuery()) {
+                if (rs.next()) {
+                    docId = rs.getLong("doc_id");
+                    incidentNo = rs.getString("incident_no");
+                } else {
+                    request.setAttribute("message", "Request not found or already processed.");
+                    request.setAttribute("type", "error");
+                    request.getRequestDispatcher("userDashboard.jsp").forward(request, response);
+                    return;
+                }
+            }
+        } catch (SQLException e) {
+            LOGGER.log(Level.SEVERE, "Fetch error", e);
+            request.setAttribute("message", "DB error: " + e.getMessage());
+            request.setAttribute("type", "error");
+            request.getRequestDispatcher("userDashboard.jsp").forward(request, response);
+            return;
+        }
+
+        // Execute the stored procedure
+        boolean success = false;
+        String statusUpdate = "FAILED";
+        try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
+             CallableStatement cstmt = conn.prepareCall(PROC_CALL)) {
+
+            cstmt.setLong(1, docId);
+            cstmt.setString(2, incidentNo);
+            cstmt.execute();
+            success = true;
+            statusUpdate = "DELETED";
+            LOGGER.info("User " + userId + " deleted doc " + docId + " (request " + requestId + ")");
+        } catch (SQLException e) {
+            LOGGER.log(Level.SEVERE, "Procedure execution failed", e);
+        }
+
+        // Update request status
+        String updateSql = "UPDATE deletion_requests SET status = ?, processed_by = ?, processed_date = CURRENT_TIMESTAMP " +
+                           "WHERE request_id = ?";
+        try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
+             PreparedStatement pst = conn.prepareStatement(updateSql)) {
+            pst.setString(1, statusUpdate);
+            pst.setString(2, userId);
+            pst.setInt(3, requestId);
+            pst.executeUpdate();
+        } catch (SQLException e) {
+            LOGGER.log(Level.SEVERE, "Update status failed", e);
+        }
+
+        if (success) {
+            request.setAttribute("message", "Document " + docId + " deleted successfully.");
+            request.setAttribute("type", "success");
+        } else {
+            request.setAttribute("message", "Deletion failed. Check logs for details.");
+            request.setAttribute("type", "error");
+        }
+        request.getRequestDispatcher("userDashboard.jsp").forward(request, response);
+    }
+}
+```
+
+---
+
+## 🚪 6. Logout Servlet
+
+```java
+package org.example;
+
+import javax.servlet.ServletException;
+import javax.servlet.annotation.WebServlet;
+import javax.servlet.http.HttpServlet;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import javax.servlet.http.HttpSession;
+import java.io.IOException;
+
+@WebServlet("/LogoutServlet")
+public class LogoutServlet extends HttpServlet {
+    private static final long serialVersionUID = 1L;
+    @Override
+    protected void doGet(HttpServletRequest request, HttpServletResponse response)
+            throws ServletException, IOException {
+        HttpSession session = request.getSession(false);
+        if (session != null) session.invalidate();
+        response.sendRedirect("login.jsp");
+    }
+}
+```
+
+---
+
+## 📝 7. Login Page (`login.jsp`)
+
+```jsp
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Login</title>
+    <style>
+        body { background: #faf2e4; margin: 0 15%; font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; }
+        .container { max-width: 400px; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); text-align: center; }
+        input { width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        input[type="submit"] { background: #57b1dc; color: white; border: none; cursor: pointer; }
+        input[type="submit"]:hover { background: #4682b4; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Login</h2>
+        <form action="LoginServlet" method="post">
+            <input type="text" name="textName" placeholder="Username" required>
+            <input type="password" name="textpwd" placeholder="Password" required>
+            <input type="submit" value="Login">
+        </form>
+    </div>
+</body>
+</html>
+```
+
+---
+
+## 📁 Deployment
+
+1. **Run the SQL scripts** to create tables and test user.
+2. **Compile all servlets** and place them in `WEB-INF/classes/org/example/`.
+3. **Copy JSP files** (`login.jsp`, `userDashboard.jsp`) to your web root.
+4. **Place `ojdbc8.jar`** in `WEB-INF/lib`.
+5. **Restart Tomcat**.
+6. **Access** `http://localhost:8080/yourapp/login.jsp` and log in with `charan` / `PamulaCharan@#12345`.
+
+---
+
+## ✅ Flow Summary
+
+- User logs in.
+- On dashboard, they can submit a request – the servlet checks `sv_invoice_header` for the doc_id. If not found, error.
+- If found, a row is inserted with `status='PENDING'`.
+- The same dashboard lists all pending requests. Any user can click **Delete** for any request.
+- The deletion servlet executes the stored procedure and updates the status.
+
+All code is **Java 1.8 compatible** and uses your existing database credentials. Let me know if you need any adjustments!
